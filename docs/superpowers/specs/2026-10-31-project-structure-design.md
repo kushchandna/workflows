@@ -59,14 +59,14 @@ workflows/                          # repo root — uv workspace, not published
 ├── pyproject.toml                  # workspace definition + shared dev tooling
 ├── packages/
 │   ├── agents/
-│   │   ├── core/                   # dist: workflows-agent              import: workflows.agent
-│   │   ├── claude-code/            # dist: workflows-agent-claude-code  import: workflows.agent_claude_code
-│   │   ├── opencode/               # dist: workflows-agent-opencode     import: workflows.agent_opencode
-│   │   └── codex/                  # dist: workflows-agent-codex        import: workflows.agent_codex
+│   │   ├── core/                   # dist: workflows-agent              import: workflows_agent
+│   │   ├── claude-code/            # dist: workflows-agent-claude-code  import: workflows_agent_claude_code
+│   │   ├── opencode/               # dist: workflows-agent-opencode     import: workflows_agent_opencode
+│   │   └── codex/                  # dist: workflows-agent-codex        import: workflows_agent_codex
 │   └── workflows/
-│       └── code-review/            # dist: workflows-code-review        import: workflows.code_review
+│       └── code-review/            # dist: workflows-code-review        import: workflows_code_review
 │           ├── pyproject.toml
-│           ├── src/workflows/code_review/
+│           ├── src/workflows_code_review/
 │           │   ├── __init__.py     # public API
 │           │   ├── models.py       # input/output schemas
 │           │   └── prompts/
@@ -98,7 +98,7 @@ workflows-code-review ──► workflows-agent ◄── workflows-agent-claude
 ### Future workflows
 
 Each new workflow is added as `packages/workflows/<name>/` with distribution
-`workflows-<name>` and import `workflows.<name>`. Code extracted when a second
+`workflows-<name>` and import `workflows_<name>`. Code extracted when a second
 workflow is built goes into its own package under `packages/`; where exactly
 is decided at that point.
 
@@ -127,21 +127,23 @@ Decided by the user:
   true`), with no git-URL or index-based dependency declarations.
 - No CI for now. The root-level isolated install check script covers
   independent installability.
+- Each package has its own top-level import (`workflows_agent`,
+  `workflows_code_review`), not a shared `workflows.*` namespace. This keeps
+  paths short (`packages/agents/core/src/workflows_agent/`) and avoids the
+  fragility of a shared PEP 420 namespace. Mapping folders to dotted names at
+  build time was tried and rejected because type checkers and IDEs can't
+  resolve such imports in editable installs.
 
 Claude's calls (overridable):
 
 - uv workspace for the monorepo; Python 3.11+.
 - Pydantic (v2) for input/output schemas — also yields JSON Schema for
   non-Python consumers.
-- Shared `workflows.*` import namespace via PEP 420 namespace packages (no
-  `__init__.py` at `src/workflows/`).
 - Each package versioned independently.
 - Shared dev tooling at the root: ruff, pytest, and a type checker.
-- The `workflows` import namespace is a placeholder, just like the
+- The `workflows_` import prefix is a placeholder, just like the
   distribution prefix. Both get renamed together, before the first external
-  consumer exists. `workflows` is too generic to share safely as a PEP 420
-  namespace. Another installed distribution that ships a regular `workflows`
-  package would break it without any warning.
+  consumer exists.
 - Testing and the dependency rule:
   - Each workflow's own `tests/` use a fake agent built against the
     interface. Even test dependencies on concrete agent packages are not
@@ -155,8 +157,8 @@ Claude's calls (overridable):
 
 ## Deferred
 
-- **Distribution prefix and import namespace.** `workflows-` and
-  `workflows.*` are placeholders. A distinctive name will be chosen before
+- **Distribution and import prefixes.** `workflows-` and `workflows_` are
+  placeholders. A distinctive name will be chosen before
   publishing.
 - **CI and repo hosting.**
 - **Agent interface shape** — designed alongside the code-review workflow.

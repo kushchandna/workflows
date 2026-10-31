@@ -1,3 +1,5 @@
+from workflows.agent.agent import Agent
+from workflows.agent.errors import AgentError, AgentTimeoutError
 from workflows.agent.events import (
     BaseEvent,
     Event,
@@ -12,8 +14,11 @@ from workflows.agent.events import (
 from workflows.agent.models import AgentRequest, AgentResult, PermissionMode, Usage
 
 __all__ = [
+    "Agent",
+    "AgentError",
     "AgentRequest",
     "AgentResult",
+    "AgentTimeoutError",
     "BaseEvent",
     "Event",
     "EventHandler",

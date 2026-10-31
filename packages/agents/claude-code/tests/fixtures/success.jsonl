@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"sess-1","model":"claude-haiku"}
+{"type":"assistant","session_id":"sess-1","message":{"id":"m1","content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"note.txt"}}],"usage":{"input_tokens":2,"output_tokens":4}}}
+{"type":"user","session_id":"sess-1","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"1\thello probe\n"}]}}
+{"type":"assistant","session_id":"sess-1","message":{"id":"m2","content":[{"type":"text","text":"hello probe"}],"usage":{"input_tokens":2,"output_tokens":6}}}
+{"type":"result","subtype":"success","is_error":false,"result":"hello probe","session_id":"sess-1","total_cost_usd":0.0045,"usage":{"input_tokens":4,"cache_creation_input_tokens":20135,"cache_read_input_tokens":37895,"output_tokens":234}}
+{"type":"system","subtype":"task_summary","session_id":"sess-1"}

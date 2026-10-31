@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 [manifest]
 members = [
     "workflows-agent",
+    "workflows-agent-claude-code",
     "workflows-workspace",
 ]
 
@@ -323,11 +324,23 @@ dependencies = [
 requires-dist = [{ name = "pydantic", specifier = ">=2" }]
 
 [[package]]
+name = "workflows-agent-claude-code"
+version = "0.1.0"
+source = { editable = "packages/agents/claude-code" }
+dependencies = [
+    { name = "workflows-agent" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "workflows-agent", editable = "packages/agents/core" }]
+
+[[package]]
 name = "workflows-workspace"
 version = "0"
 source = { virtual = "." }
 dependencies = [
     { name = "workflows-agent" },
+    { name = "workflows-agent-claude-code" },
 ]
 
 [package.dev-dependencies]
@@ -339,7 +352,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "workflows-agent", editable = "packages/agents/core" }]
+requires-dist = [
+    { name = "workflows-agent", editable = "packages/agents/core" },
+    { name = "workflows-agent-claude-code", editable = "packages/agents/claude-code" },
+]
 
 [package.metadata.requires-dev]
 dev = [

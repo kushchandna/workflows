@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from workflows_agent import AgentRequest, AgentResult, PermissionMode, Usage
+from workflows_agent import AgentRequest, AgentResult, Usage
 
 
 def test_request_defaults():
@@ -39,17 +39,7 @@ def test_result_json_round_trip():
     assert AgentResult.model_validate_json(r.model_dump_json()) == r
 
 
-def test_permission_mode_values():
-    assert PermissionMode("auto") is PermissionMode.AUTO
-    assert PermissionMode("bypass") is PermissionMode.BYPASS
-
-
 def test_models_are_frozen():
     r = AgentRequest(prompt="p", working_folder=Path("/w"))
     with pytest.raises(ValidationError):
         r.prompt = "q"
-
-
-def test_permission_mode_formats_as_its_value():
-    assert f"{PermissionMode.AUTO}" == "auto"
-    assert str(PermissionMode.BYPASS) == "bypass"

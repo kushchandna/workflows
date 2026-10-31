@@ -20,17 +20,12 @@ workflow never does this.
 | Setting | Notes |
 |---|---|
 | **Model** | Required. The workflow never chooses a model. |
-| **Permission mode** | `auto` or `bypass`. Every call made through this agent runs in this mode. |
 | **Tool-specific options** | Whatever the tool needs to run, such as the path to its binary or extra environment variables. Each package defines its own. |
 
-- The permission mode is set on the agent, not per call. Which mode is safe
-  depends on where the end product runs (a throwaway container or a
-  developer's machine), and workflows know nothing about deployment.
-- A call never waits for a human to approve anything. Whatever the mode, the
-  agent either goes ahead or fails.
-- Each package maps the two modes to its tool's own settings and documents
-  the mapping. Where a tool has no direct match for `auto`, the package uses
-  the closest setting that still never waits for approval.
+- There's no permission mode setting. Each package runs its tool in a mode
+  that never waits for a human to approve anything, usually its bypass mode,
+  and documents which mode that is.
+- The agent either goes ahead or fails. It never stops to ask.
 
 ## Making a call
 
@@ -109,8 +104,10 @@ list of events. Workflow tests use only this fake agent, never a real one.
 - **Choosing tools per call.** No list of allowed or available tools. Each
   agent uses its tool's normal set. Workflows keep agents on task through
   their prompts.
+- **Choosing a permission mode.** Each package runs its tool in a fixed
+  mode that never asks for approval.
 - **Permission limits.** No limits on which files an agent may write, and no
-  sandbox settings beyond the permission mode.
+  sandbox settings.
 - MCP servers.
 - Resuming a previous session.
 - Structured output. Workflows get results through files the agent writes.
@@ -120,15 +117,15 @@ list of events. Workflow tests use only this fake agent, never a real one.
 
 Decided by the user:
 
-- Every call runs in `auto` or `bypass` permission mode.
+- No permission mode setting. Each tool runs in a mode that never asks for
+  approval, which is bypass for Claude Code.
 - No per-call tool list in the first version. Workflows rely on their own
   prompts.
-- No permission limits beyond the mode for now.
+- No permission limits for now.
 - Every action the agent takes is logged as a stream of events.
 
 Claude's calls (overridable):
 
-- The permission mode is set when the agent is built, not per call.
 - Calls are async, and one agent object can run calls in parallel.
 - Events are delivered through an `on_event` callback while `run` returns
   the result, rather than `run` returning a stream.
@@ -136,7 +133,6 @@ Claude's calls (overridable):
 - Failures raise errors and are never reported as a result.
 - Events use the tools' own tool names and keep the raw event.
 - The request has optional extra folders, so a workflow can write results
-  outside the code under review without the `auto` mode or a tool's default
-  sandbox blocking it.
+  outside the code under review without a tool's default sandbox blocking it.
 - Request, result and event types are Pydantic models.
 - The fake agent for tests lives in the core package.

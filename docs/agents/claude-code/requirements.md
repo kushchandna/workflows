@@ -27,13 +27,16 @@ machine is the end product's job.
 
 ## Building an agent
 
-`ClaudeCodeAgent(model, permission_mode, claude_path="claude")`
+`ClaudeCodeAgent(model, claude_path="claude")`
 
 | Setting | Notes |
 |---|---|
 | **model** | Required. Passed as `--model` unchanged. Aliases such as `opus` work. |
-| **permission_mode** | `PermissionMode.AUTO` → `--permission-mode auto`. `PermissionMode.BYPASS` → `--permission-mode bypassPermissions`. |
 | **claude_path** | Optional. The `claude` executable to run, looked up on `PATH` when it's a bare name. |
+
+Every call runs with `--permission-mode bypassPermissions`. There's no
+setting for the permission mode. A headless call has no one to approve
+anything, so bypass is the mode that fits.
 
 ## Making a call
 
@@ -46,7 +49,7 @@ can run at the same time.
 claude -p
   --output-format stream-json --verbose
   --model <model>
-  --permission-mode <auto | bypassPermissions>
+  --permission-mode bypassPermissions
   [--add-dir <folder>]...                         one per extra folder
   [--append-system-prompt-file <temp file>]       only when a system prompt is given
 ```
@@ -152,6 +155,7 @@ The call raises `AgentError` when any of these happen:
 
 ## Out of scope for the first version
 
+- Choosing the permission mode.
 - Passing any other CLI flags (tool lists, MCP config, settings files, budget
   or turn limits, fallback model).
 - Turning off the machine's settings, hooks, MCP servers or plugins.
@@ -166,8 +170,9 @@ Decided by the user:
 - Runs the `claude` CLI directly, not the Python Agent SDK.
 - Uses the machine's Claude Code setup as it is (login, settings, CLAUDE.md,
   MCP servers, plugins).
-- The only agent settings are model and permission mode, plus where to find
-  the CLI.
+- Every call runs in `bypassPermissions` mode. The permission mode isn't a
+  setting.
+- The only agent settings are model and where to find the CLI.
 
 Claude's calls (overridable):
 

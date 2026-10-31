@@ -1,6 +1,6 @@
 import pytest
 
-from workflows.agent import Agent, AgentError, AgentTimeoutError
+from workflows_agent import Agent, AgentError, AgentTimeoutError
 
 
 def test_agent_requires_run():

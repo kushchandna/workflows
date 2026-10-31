@@ -3,7 +3,7 @@ from datetime import UTC
 import pytest
 from pydantic import TypeAdapter
 
-from workflows.agent import (
+from workflows_agent import (
     Event,
     OtherEvent,
     ReasoningEvent,

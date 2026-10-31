@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from workflows.agent import (
+from workflows_agent import (
     Agent,
     AgentError,
     AgentRequest,
@@ -14,7 +14,7 @@ from workflows.agent import (
     ToolCallEvent,
     Usage,
 )
-from workflows.agent.testing import FakeAgent
+from workflows_agent.testing import FakeAgent
 
 
 def req(tmp_path: Path, **kw) -> AgentRequest:

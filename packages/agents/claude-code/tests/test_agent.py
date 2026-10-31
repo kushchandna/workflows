@@ -6,6 +6,7 @@ import pytest
 from workflows_agent import (
     AgentError,
     AgentRequest,
+    AgentTimeoutError,
     Event,
     OtherEvent,
     TextEvent,
@@ -164,3 +165,39 @@ async def test_parallel_calls_have_distinct_ids(tmp_path, fake_claude, use_fixtu
         )
     )
     assert len({r.call_id for r in results}) == 4
+
+
+async def test_executable_that_cannot_be_run(tmp_path):
+    not_runnable = tmp_path / "claude"
+    not_runnable.write_text("no shebang here\n")
+    not_runnable.chmod(0o755)
+    with pytest.raises(AgentError, match="not runnable"):
+        await ClaudeCodeAgent("haiku", not_runnable).run(
+            AgentRequest(prompt="p", working_folder=tmp_path)
+        )
+
+
+async def test_timeout_error_carries_stderr(
+    tmp_path, fake_claude, no_output, monkeypatch
+):
+    monkeypatch.setenv("FAKE_CLAUDE_STDERR", "overloaded, retrying")
+    monkeypatch.setenv("FAKE_CLAUDE_SLEEP", "30")
+    with pytest.raises(AgentTimeoutError) as info:
+        await ClaudeCodeAgent("haiku", fake_claude).run(
+            AgentRequest(prompt="p", working_folder=tmp_path, timeout_seconds=1)
+        )
+    assert "overloaded, retrying" in (info.value.stderr or "")
+
+
+async def test_stdout_read_while_prompt_is_written(
+    tmp_path, fake_claude, use_fixture, monkeypatch
+):
+    # claude fills the stdout pipe before reading stdin: both sides must not block.
+    use_fixture("success.jsonl")
+    monkeypatch.setenv("FAKE_CLAUDE_EARLY_STDOUT", "2000000")
+    result = await ClaudeCodeAgent("haiku", fake_claude).run(
+        AgentRequest(
+            prompt="x" * 1_000_000, working_folder=tmp_path, timeout_seconds=10
+        )
+    )
+    assert result.final_message == "hello probe"

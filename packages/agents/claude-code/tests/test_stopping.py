@@ -100,3 +100,24 @@ async def test_sigkill_after_grace_when_term_ignored():
     await stop_process_group(proc, grace_seconds=0.3)
     assert proc.returncode is not None
     assert time.monotonic() - start < 3
+
+
+async def test_second_cancel_still_kills(
+    tmp_path, fake_claude, child_pid_file, record, monkeypatch
+):
+    monkeypatch.setenv("FAKE_CLAUDE_SLEEP", "30")
+    monkeypatch.setenv("FAKE_CLAUDE_IGNORE_TERM", "1")
+    task = asyncio.create_task(
+        ClaudeCodeAgent("haiku", fake_claude).run(
+            AgentRequest(prompt="p", working_folder=tmp_path)
+        )
+    )
+    while not child_pid_file.exists() or not child_pid_file.read_text():
+        await asyncio.sleep(0.05)
+    claude_pid = record()["pid"]
+    task.cancel()
+    await asyncio.sleep(0.3)  # inside the SIGTERM grace period
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await wait_dead(claude_pid)

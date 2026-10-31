@@ -27,9 +27,12 @@ async def stop_process_group(
     ``grace_seconds`` for the process, then sends SIGKILL to whatever is left.
     """
     _signal_group(proc.pid, signal.SIGTERM)
-    with contextlib.suppress(TimeoutError):
-        await asyncio.wait_for(wait_for_exit(proc), grace_seconds)
-    _signal_group(proc.pid, signal.SIGKILL)
+    try:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(wait_for_exit(proc), grace_seconds)
+    finally:
+        # Also on cancellation during the grace period: never leave it running.
+        _signal_group(proc.pid, signal.SIGKILL)
     await wait_for_exit(proc)
 
 

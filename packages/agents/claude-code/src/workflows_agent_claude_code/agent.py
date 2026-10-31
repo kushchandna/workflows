@@ -68,28 +68,27 @@ class ClaudeCodeAgent(Agent):
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
-        except (FileNotFoundError, PermissionError) as e:
+        except OSError as e:
             raise AgentError(
                 f"claude executable not found or not runnable: {self.claude_path}"
             ) from e
         assert proc.stdin and proc.stdout and proc.stderr
-        stderr_task = asyncio.create_task(proc.stderr.read())
+        stderr = bytearray()
+        stderr_task = asyncio.create_task(_collect(proc.stderr, stderr))
+        # Write the prompt while reading stdout, so neither pipe can fill up
+        # and block both sides.
+        writer = asyncio.create_task(
+            _write_and_close(proc.stdin, request.prompt.encode())
+        )
         # Once claude exits, stop whatever it left running. Leftover children
         # can hold stdout open, and reading would otherwise wait for them.
         reaper = asyncio.create_task(_stop_after_exit(proc))
 
         result: dict[str, Any] | None = None
         session_id: str | None = None
-        stderr = ""
         timeout = asyncio.timeout(request.timeout_seconds)
         try:
             async with timeout:
-                try:
-                    proc.stdin.write(request.prompt.encode())
-                    await proc.stdin.drain()
-                    proc.stdin.close()
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
                 async for line in iter_lines(proc.stdout):
                     for event in events_from_line(line, call_id):
                         if isinstance(event.raw, dict) and event.raw.get("session_id"):
@@ -98,17 +97,19 @@ class ClaudeCodeAgent(Agent):
                             result = event.raw
                         if on_event is not None:
                             on_event(event)
+                await writer
                 await reaper
-                stderr = (await stderr_task).decode("utf-8", errors="replace")
+                await stderr_task
         except TimeoutError as e:
             if not timeout.expired():
                 raise
             raise AgentTimeoutError(
                 f"call timed out after {request.timeout_seconds} seconds",
-                stderr=stderr or None,
+                stderr=_text(stderr),
                 session_id=session_id,
             ) from e
         finally:
+            writer.cancel()
             reaper.cancel()
             stderr_task.cancel()
             await stop_process_group(proc)
@@ -127,7 +128,25 @@ class ClaudeCodeAgent(Agent):
                 duration_seconds=time.monotonic() - start,
                 usage=usage_from_result(result),
             )
-        raise AgentError(message, stderr=stderr or None, session_id=session_id)
+        raise AgentError(message, stderr=_text(stderr), session_id=session_id)
+
+
+async def _write_and_close(stdin: asyncio.StreamWriter, data: bytes) -> None:
+    try:
+        stdin.write(data)
+        await stdin.drain()
+        stdin.close()
+    except (BrokenPipeError, ConnectionResetError):
+        pass  # claude exited without reading; its exit code tells why
+
+
+async def _collect(stream: asyncio.StreamReader, into: bytearray) -> None:
+    while chunk := await stream.read(65536):
+        into += chunk
+
+
+def _text(data: bytearray) -> str | None:
+    return data.decode("utf-8", errors="replace") or None
 
 
 async def _stop_after_exit(proc: asyncio.subprocess.Process) -> None:

@@ -1,12 +1,6 @@
-from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
-
-
-class PermissionMode(StrEnum):
-    AUTO = "auto"
-    BYPASS = "bypass"
 
 
 class AgentRequest(BaseModel):

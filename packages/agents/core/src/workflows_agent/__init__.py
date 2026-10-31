@@ -11,7 +11,7 @@ from workflows_agent.events import (
     ToolResultEvent,
     UsageEvent,
 )
-from workflows_agent.models import AgentRequest, AgentResult, PermissionMode, Usage
+from workflows_agent.models import AgentRequest, AgentResult, Usage
 
 __all__ = [
     "Agent",
@@ -23,7 +23,6 @@ __all__ = [
     "Event",
     "EventHandler",
     "OtherEvent",
-    "PermissionMode",
     "ReasoningEvent",
     "TextEvent",
     "ToolCallEvent",

@@ -7,8 +7,9 @@ from workflows_agent.models import AgentRequest, AgentResult
 class Agent(ABC):
     """An AI coding agent that workflows run through.
 
-    The end product builds a concrete agent (model, permission mode and
-    tool-specific options) and passes it to a workflow.
+    The end product builds a concrete agent (model and tool-specific options)
+    and passes it to a workflow. Every call runs in a mode that never waits for
+    a human to approve anything.
     """
 
     @abstractmethod

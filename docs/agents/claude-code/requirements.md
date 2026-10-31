@@ -135,8 +135,13 @@ The call raises `AgentError` when any of these happen:
   It's started in a new process group so they can all be stopped together.
 - Stopping sends SIGTERM to the group, waits 5 seconds, then sends SIGKILL to
   whatever is still running.
-- No process from a call is left running after the call ends, whether it
-  succeeded, failed, timed out or was cancelled.
+- The group is also stopped as soon as `claude` exits, so a leftover child
+  can't keep its output open and make the call hang.
+- **Known limit:** `claude` starts its Bash-tool shells and hook commands
+  detached, in their own session (seen in CLI 2.1.314). Stopping the group
+  doesn't reach them. Cleaning them up relies on `claude` handling SIGTERM.
+  If `claude` has to be killed with SIGKILL, a running tool command can be
+  left behind. This is accepted for now.
 
 ## Testing
 
@@ -173,6 +178,8 @@ Decided by the user:
 - Every call runs in `bypassPermissions` mode. The permission mode isn't a
   setting.
 - The only agent settings are model and where to find the CLI.
+- Tool shells that `claude` starts detached aren't tracked. Their cleanup is
+  left to `claude`'s own SIGTERM handling for now.
 
 Claude's calls (overridable):
 

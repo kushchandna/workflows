@@ -4,6 +4,19 @@ import os
 import signal
 
 
+async def wait_for_exit(
+    proc: asyncio.subprocess.Process, poll_seconds: float = 0.05
+) -> int:
+    """Wait until the process itself has exited and return its exit code.
+
+    On Python 3.11, ``Process.wait()`` also waits for the process's pipes to
+    close, which never happens while a leftover child still holds them.
+    """
+    while proc.returncode is None:
+        await asyncio.sleep(poll_seconds)
+    return proc.returncode
+
+
 async def stop_process_group(
     proc: asyncio.subprocess.Process, grace_seconds: float = 5.0
 ) -> None:
@@ -14,11 +27,10 @@ async def stop_process_group(
     ``grace_seconds`` for the process, then sends SIGKILL to whatever is left.
     """
     _signal_group(proc.pid, signal.SIGTERM)
-    if proc.returncode is None:
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(proc.wait(), grace_seconds)
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(wait_for_exit(proc), grace_seconds)
     _signal_group(proc.pid, signal.SIGKILL)
-    await proc.wait()
+    await wait_for_exit(proc)
 
 
 def _signal_group(pgid: int, sig: signal.Signals) -> None:

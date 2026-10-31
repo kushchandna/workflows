@@ -18,7 +18,7 @@ from workflows_agent import (
 from workflows_agent_claude_code.command import build_command
 from workflows_agent_claude_code.lines import iter_lines
 from workflows_agent_claude_code.parse import events_from_line, usage_from_result
-from workflows_agent_claude_code.process import stop_process_group
+from workflows_agent_claude_code.process import stop_process_group, wait_for_exit
 
 
 class ClaudeCodeAgent(Agent):
@@ -131,7 +131,7 @@ class ClaudeCodeAgent(Agent):
 
 
 async def _stop_after_exit(proc: asyncio.subprocess.Process) -> None:
-    await proc.wait()
+    await wait_for_exit(proc)
     await stop_process_group(proc)
 
 

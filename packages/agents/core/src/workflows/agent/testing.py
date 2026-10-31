@@ -11,14 +11,15 @@ from workflows.agent.errors import AgentTimeoutError
 from workflows.agent.events import Event, EventHandler
 from workflows.agent.models import AgentRequest, AgentResult
 
-Respond = Callable[[AgentRequest], str | Awaitable[str]]
+Respond = Callable[[AgentRequest], str | AgentResult | Awaitable[str | AgentResult]]
 
 
 class FakeAgent(Agent):
     """Runs calls through a test-supplied ``respond`` function.
 
     ``respond`` gets each request, may write files or raise, and returns the
-    final message. ``events`` are emitted to ``on_event`` before it runs, with
+    final message or a full ``AgentResult`` (its ``call_id`` and
+    ``duration_seconds`` are replaced by the call's own). ``events`` are emitted to ``on_event`` before it runs, with
     their ``call_id`` replaced by the call's own.
     """
 
@@ -35,22 +36,28 @@ class FakeAgent(Agent):
         self.requests.append(request)
         call_id = uuid4().hex
         start = time.monotonic()
+        timeout = asyncio.timeout(request.timeout_seconds)
         try:
-            async with asyncio.timeout(request.timeout_seconds):
-                final_message = await self._call(request, call_id, on_event)
+            async with timeout:
+                reply = await self._call(request, call_id, on_event)
         except TimeoutError as e:
+            if not timeout.expired():
+                raise
             raise AgentTimeoutError(
                 f"call timed out after {request.timeout_seconds} seconds"
             ) from e
+        duration = time.monotonic() - start
+        if isinstance(reply, AgentResult):
+            return reply.model_copy(
+                update={"call_id": call_id, "duration_seconds": duration}
+            )
         return AgentResult(
-            call_id=call_id,
-            final_message=final_message,
-            duration_seconds=time.monotonic() - start,
+            call_id=call_id, final_message=reply, duration_seconds=duration
         )
 
     async def _call(
         self, request: AgentRequest, call_id: str, on_event: EventHandler | None
-    ) -> str:
+    ) -> str | AgentResult:
         if on_event is not None:
             for event in self._events:
                 on_event(event.model_copy(update={"call_id": call_id}))

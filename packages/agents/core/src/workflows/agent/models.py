@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class PermissionMode(str, Enum):
+class PermissionMode(StrEnum):
     AUTO = "auto"
     BYPASS = "bypass"
 

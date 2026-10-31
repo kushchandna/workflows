@@ -48,3 +48,8 @@ def test_models_are_frozen():
     r = AgentRequest(prompt="p", working_folder=Path("/w"))
     with pytest.raises(ValidationError):
         r.prompt = "q"
+
+
+def test_permission_mode_formats_as_its_value():
+    assert f"{PermissionMode.AUTO}" == "auto"
+    assert str(PermissionMode.BYPASS) == "bypass"

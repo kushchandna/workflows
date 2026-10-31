@@ -7,10 +7,12 @@ from workflows.agent import (
     Agent,
     AgentError,
     AgentRequest,
+    AgentResult,
     AgentTimeoutError,
     Event,
     TextEvent,
     ToolCallEvent,
+    Usage,
 )
 from workflows.agent.testing import FakeAgent
 
@@ -106,3 +108,42 @@ async def test_parallel_calls_have_distinct_ids(tmp_path):
     await asyncio.gather(*(call() for _ in range(5)))
     assert len(seen) == 5
     assert all(e.call_id == cid for cid, evs in seen.items() for e in evs)
+
+
+async def test_on_event_timeout_error_is_not_converted(tmp_path):
+    def sink(e):
+        raise TimeoutError("sink timed out")
+
+    agent = FakeAgent(events=[TextEvent(call_id="x", text="hi")])
+    with pytest.raises(TimeoutError, match="sink timed out") as info:
+        await agent.run(req(tmp_path, timeout_seconds=5), on_event=sink)
+    assert not isinstance(info.value, AgentTimeoutError)
+
+
+async def test_respond_timeout_error_without_timeout_is_not_converted(tmp_path):
+    def respond(r):
+        raise TimeoutError("inner")
+
+    with pytest.raises(TimeoutError, match="inner") as info:
+        await FakeAgent(respond=respond).run(req(tmp_path))
+    assert not isinstance(info.value, AgentTimeoutError)
+
+
+async def test_respond_can_return_full_result(tmp_path):
+    def respond(r):
+        return AgentResult(
+            call_id="ignored",
+            final_message="m",
+            session_id="s",
+            duration_seconds=99,
+            usage=Usage(input_tokens=3, cost_usd=0.5),
+        )
+
+    seen: list[Event] = []
+    agent = FakeAgent(respond=respond, events=[TextEvent(call_id="x", text="hi")])
+    result = await agent.run(req(tmp_path), on_event=seen.append)
+    assert result.final_message == "m"
+    assert result.session_id == "s"
+    assert result.usage == Usage(input_tokens=3, cost_usd=0.5)
+    assert result.call_id == seen[0].call_id != "ignored"
+    assert result.duration_seconds < 99

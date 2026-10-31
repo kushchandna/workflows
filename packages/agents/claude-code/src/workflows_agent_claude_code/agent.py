@@ -18,6 +18,7 @@ from workflows_agent import (
 from workflows_agent_claude_code.command import build_command
 from workflows_agent_claude_code.lines import iter_lines
 from workflows_agent_claude_code.parse import events_from_line, usage_from_result
+from workflows_agent_claude_code.process import stop_process_group
 
 
 class ClaudeCodeAgent(Agent):
@@ -73,6 +74,9 @@ class ClaudeCodeAgent(Agent):
             ) from e
         assert proc.stdin and proc.stdout and proc.stderr
         stderr_task = asyncio.create_task(proc.stderr.read())
+        # Once claude exits, stop whatever it left running. Leftover children
+        # can hold stdout open, and reading would otherwise wait for them.
+        reaper = asyncio.create_task(_stop_after_exit(proc))
 
         result: dict[str, Any] | None = None
         session_id: str | None = None
@@ -94,7 +98,7 @@ class ClaudeCodeAgent(Agent):
                             result = event.raw
                         if on_event is not None:
                             on_event(event)
-                await proc.wait()
+                await reaper
                 stderr = (await stderr_task).decode("utf-8", errors="replace")
         except TimeoutError as e:
             if not timeout.expired():
@@ -105,10 +109,9 @@ class ClaudeCodeAgent(Agent):
                 session_id=session_id,
             ) from e
         finally:
-            if proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+            reaper.cancel()
             stderr_task.cancel()
+            await stop_process_group(proc)
 
         if result is not None and result.get("is_error"):
             message = str(result.get("result") or "claude reported an error")
@@ -125,6 +128,11 @@ class ClaudeCodeAgent(Agent):
                 usage=usage_from_result(result),
             )
         raise AgentError(message, stderr=stderr or None, session_id=session_id)
+
+
+async def _stop_after_exit(proc: asyncio.subprocess.Process) -> None:
+    await proc.wait()
+    await stop_process_group(proc)
 
 
 def _write_temp(text: str | None) -> Path | None:

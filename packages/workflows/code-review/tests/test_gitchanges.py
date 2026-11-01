@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,15 @@ from workflows.code_review.changes import ChangedFile
 from workflows.code_review.gitchanges import changes_from_git, check_codebase
 
 pytestmark = pytest.mark.git
+
+
+@pytest.fixture(scope="module", autouse=True)
+def hermetic_git():
+    """Keep the developer's global git config out of these tests."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        mp.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        yield
 
 
 def git(repo: Path, *args: str) -> str:
@@ -43,9 +53,14 @@ def repo(tmp_path_factory) -> tuple[Path, str]:
         "glob[1]*.py",
     ]:
         (r / name).write_text(f"{name}\nline2\n")
+    (r / "dir with space").mkdir()
+    (r / "dir with space" / "tracked ü.py").write_text("one\n")
+    (r / "dir with space" / "moved ö.py").write_text("two\n")
     git(r, "add", "-A")
     git(r, "commit", "-qm", "base")
     base = git(r, "rev-parse", "HEAD").strip()
+    (r / "dir with space" / "tracked ü.py").write_text("one\nplus\n")
+    git(r, "mv", "dir with space/moved ö.py", "dir with space/moved ß.py")
     (r / "committed.py").write_text("c\n")
     git(r, "add", "committed.py")
     git(r, "commit", "-qm", "after base")
@@ -58,7 +73,6 @@ def repo(tmp_path_factory) -> tuple[Path, str]:
     (r / "untracked.py").write_text("u1\nu2\n")
     (r / "ignored.txt").write_text("secret\n")
     (r / "image.bin").write_bytes(b"\x00\x01\x02")
-    (r / "dir with space").mkdir()
     (r / "dir with space" / "naïve.py").write_text("x\n")
     return r, base
 
@@ -81,6 +95,8 @@ def test_lists_every_kind_of_change(repo, tmp_path):
         "untracked.py",
         "image.bin",
         "dir with space/naïve.py",
+        "dir with space/tracked ü.py",
+        "dir with space/moved ß.py",
     }
     assert files["new_name.py"].status == "renamed"
     assert files["new_name.py"].old_path == "old_name.py"
@@ -108,13 +124,22 @@ def test_paths_with_spaces_and_unicode(repo, tmp_path):
     assert files["glob[1]*.py"].changed_lines == 1
     assert "+more" in (tmp_path / "diffs" / "glob[1]*.py.diff").read_text()
     assert files["dir with space/naïve.py"].status == "added"
+    assert files["dir with space/tracked ü.py"].changed_lines == 1
+    moved = files["dir with space/moved ß.py"]
+    assert (moved.status, moved.old_path) == ("renamed", "dir with space/moved ö.py")
+    diffs = tmp_path / "diffs" / "dir with space"
+    assert "+plus" in (diffs / "tracked ü.py.diff").read_text()
+    assert (
+        "rename from dir with space/moved ö.py"
+        in (diffs / "moved ß.py.diff").read_text()
+    )
     assert (tmp_path / "diffs" / "dir with space" / "naïve.py.diff").exists()
 
 
 def test_codebase_in_subdirectory_reports_paths_relative_to_it(repo, tmp_path):
     r, _ = repo
     files = by_path(repo, tmp_path, path=r / "dir with space")
-    assert set(files) == {"naïve.py"}
+    assert set(files) == {"naïve.py", "tracked ü.py", "moved ß.py"}
 
 
 def test_check_codebase_errors(repo, tmp_path):

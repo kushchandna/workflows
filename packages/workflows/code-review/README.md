@@ -40,7 +40,7 @@ At least one of `codebase` and `diffs` is required; every other field is optiona
 
 | Field | Meaning |
 |---|---|
-| `codebase` | `Codebase(path, base_commit)`: the code with the change applied, committed or not, and the commit the change starts from. Uncommitted and untracked files count; git-ignored files don't. |
+| `codebase` | `Codebase(path=..., base_commit=...)`: the code with the change applied, committed or not, and the commit the change starts from. Uncommitted and untracked files count; git-ignored files don't. |
 | `diffs` | A folder with one `git diff` per changed file, stored at `<path>.diff`. When both are given, the diffs decide what changed and the codebase is only read for context. |
 | `discussions` | JSON files, read together as one list of existing threads (format below). |
 | `description` | Free text describing the change. |
@@ -64,7 +64,7 @@ A target is `lines` (with `side` `new` or `old`; `old` is for deleted lines), `f
 `ReviewResult` converts to JSON with `model_dump_json()`.
 
 - **`status`**: `approved`, `changes_requested`, or `inconclusive` (the reviewer couldn't judge
-  properly: a file couldn't be reviewed or a pass failed).
+  properly: a file couldn't be reviewed, a pass failed, or consolidation couldn't decide).
 - **`comments`**: each has a `target`, a `body` and an optional `reply_to` (a thread id). A
   reply carries its thread's own target.
 - **`thread_actions`**: `resolve` or `reopen` for a thread id. The end product decides whether to
@@ -85,15 +85,15 @@ is `unreviewed`, and the status can't be `approved`.
 | test coverage | Whether new and changed behavior is tested, judged by reading code. |
 | code patterns | Whether the change follows the codebase's conventions (only with a codebase). |
 | overall | Whether the change does what the description says, and what is missing across files. |
-| consolidation | Removes duplicate comments, sets the final status. |
+| consolidation | Merges duplicate comments, drops new comments that repeat an open thread, may reply to threads nobody answered, and sets the final status. |
 
 Per-file batches, test coverage and code patterns run in parallel, then overall, then
 consolidation. A pass may use its own agent; the rest use the default agent.
 
-Comments an agent got wrong aren't lost: after the retry, a comment with an invalid target moves
-to the whole-change level with its claimed location in the body. Every pass reads all existing
-threads, but only the pass a thread is routed to may reply to it, resolve it or reopen it.
-Those replies and actions always reach the result.
+A comment with an invalid target isn't dropped: after the retry it moves to the whole-change level
+with its claimed location in the body, and consolidation then decides whether to keep it. Every
+pass reads all existing threads, but only the pass a thread is routed to may reply to it, resolve
+it or reopen it. Those replies and actions always reach the result.
 
 ## Settings
 
@@ -105,14 +105,15 @@ Those replies and actions always reach the result.
 | `files_per_batch` | 10 | Most files in a per-file batch. Pure renames and deletions count toward neither limit. |
 | `directory_break_min_fill` | 0.5 | How full a batch must be before it breaks at a new top-level directory. |
 | `max_parallel_calls` | 4 | Most agent calls running at once. |
-| `agent_timeout_seconds` | 1800 | Timeout of every agent call. |
-| `work_folder` | none | Keep the review's files here (it must be empty or missing). Otherwise a temporary folder is used and deleted. |
+| `agent_timeout_seconds` | 1800 | Timeout of every agent call (`None` for no timeout). |
+| `work_folder` | none | Keep the review's files here. It must be empty or missing, and outside the codebase. Otherwise a temporary folder is used and deleted. |
 
 ## Errors
 
-`ReviewInputError` is raised before any agent runs: no codebase or diffs, a codebase that isn't a
-git work tree or whose base commit doesn't exist, a missing diffs folder, a bad discussions file
-or duplicate thread ids, or a `work_folder` that isn't empty. An `AgentError` from any call
+`ReviewInputError` is raised before any agent runs: no codebase or diffs, a codebase path that
+doesn't exist (or, when no diffs folder is given, isn't a git work tree or has no such base
+commit), a missing diffs folder, a bad discussions file or duplicate thread ids, or a
+`work_folder` that isn't empty or is inside the codebase. An `AgentError` from any call
 propagates and cancels the calls still running. Failures are never reported as a status.
 
 ## The work folder
@@ -124,9 +125,14 @@ propagates and cancels the calls still running. Failures are never reported as a
   review-passes/         checked results only; per-file results mirror input/diffs/
 ```
 
-Agents read the codebase, `input/` and `review-passes/`, and write only inside their own folder
-under `agent-output/`. Set `work_folder` to keep it all; together with the event log it is the
-record for investigating a review.
+Agents are told to read the codebase, `input/` and `review-passes/`, and to write only inside
+their own folder under `agent-output/`. Nothing enforces this: the agent interface has no
+write limits, and the [Claude Code agent](../../agents/claude-code/README.md) runs in
+`bypassPermissions` mode, so a misbehaving agent could change files in the codebase. When you
+review uncommitted work you can't afford to lose, use a throwaway copy of the checkout.
+
+Set `work_folder` to keep the folder; together with the event log it is the record for
+investigating a review.
 
 ## Tests
 

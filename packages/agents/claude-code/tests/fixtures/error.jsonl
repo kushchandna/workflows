@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-2","model":"no-such-model"}
+{"type":"result","subtype":"success","is_error":true,"result":"There's an issue with the selected model (no-such-model).","session_id":"sess-2"}

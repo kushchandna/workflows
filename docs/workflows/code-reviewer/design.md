@@ -86,7 +86,11 @@ result = await reviewer.review(
   - `files: list[FileCoverage]`, each with `path`, `state` (`reviewed`,
     `skipped` or `unreviewed`) and `reason: str | None`;
   - `passes: list[PassCoverage]`, each with `review_pass`, `state` (`ran`,
-    `skipped` or `failed`) and `reason: str | None`.
+    `skipped` or `failed`) and `reason: str | None`;
+  - `dropped_thread_actions: list[DroppedThreadAction]`, each with
+    `thread_id`, `action`, `review_pass` and `reason`: thread actions that
+    were still invalid after the retry, for example on a thread that call
+    wasn't given.
 - `Target`, one of:
   - `LinesTarget`: `type: "lines"`, `path`, `start_line`, `end_line`,
     `side: "new" | "old"`. `old` means line numbers from before the change,

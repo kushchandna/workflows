@@ -10,6 +10,14 @@ from workflows.code_review.models import Codebase
 
 _Status = Literal["added", "modified", "deleted", "renamed"]
 _STATUS: dict[str, _Status] = {"A": "added", "D": "deleted", "R": "renamed"}
+# Written diffs must show the file as it is, whatever the user's git config says.
+_DIFF_FLAGS = [
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+]
 
 
 def _run(cwd: Path, *args: str, ok: tuple[int, ...] = (0,)) -> bytes:
@@ -106,15 +114,7 @@ def changes_from_git(codebase: Codebase, diffs_dir: Path) -> list[ChangedFile]:
         )
         pathspec = [old_path, path] if old_path else [path]
         diff = _run(
-            cwd,
-            "diff",
-            "-M",
-            "--relative",
-            "--no-color",
-            "--no-ext-diff",
-            base,
-            "--",
-            *pathspec,
+            cwd, "diff", "-M", "--relative", *_DIFF_FLAGS, base, "--", *pathspec
         )
         _write(diffs_dir, path, diff)
 
@@ -122,15 +122,7 @@ def changes_from_git(codebase: Codebase, diffs_dir: Path) -> list[ChangedFile]:
         if path.endswith("/"):  # an embedded git repository, not a file
             continue
         diff = _run(
-            cwd,
-            "diff",
-            "--no-index",
-            "--no-color",
-            "--no-ext-diff",
-            "--",
-            "/dev/null",
-            path,
-            ok=(0, 1),
+            cwd, "diff", "--no-index", *_DIFF_FLAGS, "--", "/dev/null", path, ok=(0, 1)
         )
         if not diff:  # git cannot diff it, for example a symlink to a directory
             continue

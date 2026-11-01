@@ -151,3 +151,25 @@ def test_untracked_entries_git_cannot_diff_are_skipped(tmp_path):
     }
     assert set(files) == {"empty.txt", "real.py"}
     assert {f.status for f in files.values()} == {"added"}
+
+
+def test_diffs_ignore_the_users_diff_config(tmp_path):
+    r = tmp_path / "repo"
+    r.mkdir()
+    git(r, "init", "-q")
+    git(r, "config", "diff.up.textconv", "tr a-z A-Z <")  # shifts what a diff shows
+    git(r, "config", "diff.noprefix", "true")
+    (r / ".gitattributes").write_text("*.up diff=up\n")
+    (r / "f.up").write_text("hello\n")
+    git(r, "add", "-A")
+    git(r, "commit", "-qm", "base")
+    base = git(r, "rev-parse", "HEAD").strip()
+    (r / "f.up").write_text("hello\nworld\n")
+    (r / "new.up").write_text("fresh\n")
+    changes_from_git(Codebase(path=r, base_commit=base), tmp_path / "diffs")
+    tracked = (tmp_path / "diffs" / "f.up.diff").read_text()
+    assert "+world" in tracked and "WORLD" not in tracked
+    assert "--- a/f.up" in tracked and "+++ b/f.up" in tracked
+    untracked = (tmp_path / "diffs" / "new.up.diff").read_text()
+    assert "+fresh" in untracked and "FRESH" not in untracked
+    assert "+++ b/new.up" in untracked

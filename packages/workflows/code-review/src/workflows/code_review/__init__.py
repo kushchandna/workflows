@@ -17,9 +17,11 @@ from workflows.code_review.models import (
     Target,
     ThreadAction,
 )
+from workflows.code_review.reviewer import CodeReviewer
 
 __all__ = [
     "ChangeTarget",
+    "CodeReviewer",
     "Codebase",
     "Comment",
     "Coverage",

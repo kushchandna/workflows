@@ -6,6 +6,8 @@ the codebase and compare.
 
 Not your job: general correctness, which other passes cover.
 
+Comments may also point at unchanged files, for example a caller that was not updated.
+
 Changed files:
 $changed
 

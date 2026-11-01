@@ -43,12 +43,12 @@ Output folder: $output_folder
 
 A comment is {"target": <target>, "body": "<text>", "reply_to": null}. A target is one of:
 
-- {"type": "lines", "path": "<path relative to the repository root>", "start_line": 10,
+- {"type": "lines", "path": "<path relative to the codebase folder>", "start_line": 10,
   "end_line": 12, "side": "new"}: lines of the file after the change. For deleted lines use
   "side": "old" with the line numbers from before the change.
 - {"type": "file", "path": "<path>"}: a whole file.
 - {"type": "change"}: the whole change.
 
-Write paths plainly, relative to the repository root, such as src/a.py: no leading "./",
-no trailing "/" and no "..". Point at lines whenever you can. Comments may also point at unchanged files, for example a
-caller that was not updated. Every line number must exist in the file.
+Write paths plainly, relative to the codebase folder and exactly as in the file's diff under
+the diffs folder, such as src/a.py: no leading "./", no trailing "/" and no "..". Point at
+lines whenever you can. Every line number must exist in the file.

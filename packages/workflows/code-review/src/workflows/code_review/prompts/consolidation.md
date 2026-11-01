@@ -25,10 +25,13 @@ threads you may act on.
 
 The status is one of:
 
-- "changes_requested": the change needs work. Choose it when any remaining comment asks for
-  a change, or when one of the reviewer's own open threads (its first message is by the
-  reviewer) still blocks, even if nothing new was found.
-- "approved": nothing blocks the change. Comments may still be present.
+- "changes_requested": the change needs work. Choose it when a remaining comment is a problem
+  that must be fixed before the change can be accepted, or when one of the reviewer's own
+  threads (its first message is by the reviewer) is still open and blocking, even if nothing
+  new was found. Judge a thread after applying the thread actions in the earlier results: a
+  thread an earlier pass resolved no longer blocks, and one it reopened does.
+- "approved": nothing blocks the change. Comments may still be present; suggestions and small
+  remarks alone do not block.
 - "inconclusive": only when you cannot judge at all.
 
 Write your result to the result file below, in this format:

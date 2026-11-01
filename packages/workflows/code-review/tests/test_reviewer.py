@@ -319,3 +319,20 @@ async def test_codebase_mode_reads_the_repository(tmp_path, prompt_info):
     passes = {p.review_pass: p.state for p in r.coverage.passes}
     assert passes[ReviewPass.CODE_PATTERNS] == "ran"
     assert {q.working_folder for q in agent.requests} == {repo}
+
+
+@pytest.mark.parametrize("inside", [".review", "sub/.review", ""])
+async def test_work_folder_inside_the_codebase_is_rejected(tmp_path, diffs, inside):
+    # In git mode the review's own diff files would show up as untracked changes
+    # and be reviewed. Reject it before anything is created.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    work = repo / inside if inside else repo
+    agent = FakeAgent()
+    reviewer = CodeReviewer(agent, settings=ReviewSettings(work_folder=work))
+    review_input = ReviewInput(
+        diffs=diffs, codebase=Codebase(path=repo, base_commit="HEAD")
+    )
+    with pytest.raises(ReviewInputError, match="inside the codebase"):
+        await reviewer.review(review_input)
+    assert agent.requests == [] and list(repo.iterdir()) == []

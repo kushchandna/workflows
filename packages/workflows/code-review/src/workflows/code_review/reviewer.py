@@ -78,6 +78,13 @@ class CodeReviewer:
             with tempfile.TemporaryDirectory(prefix="code-review-") as tmp:
                 return await self._review(review_input, Path(tmp).resolve(), on_event)
         configured = configured.resolve()
+        if review_input.codebase is not None and configured.is_relative_to(
+            review_input.codebase.path.resolve()
+        ):
+            # Git mode would list the review's own files as untracked changes.
+            raise ReviewInputError(
+                f"work folder must not be inside the codebase: {configured}"
+            )
         if configured.exists() and (
             not configured.is_dir() or any(configured.iterdir())
         ):

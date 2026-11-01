@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from workflows_agent.models import Usage
+from workflows.agent.models import Usage
 
 
 def _now() -> datetime:

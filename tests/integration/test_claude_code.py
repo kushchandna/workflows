@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from workflows_agent import AgentRequest, Event, ToolCallEvent
-from workflows_agent_claude_code import ClaudeCodeAgent
+from workflows.agent import AgentRequest, Event, ToolCallEvent
+from workflows.agent_claude_code import ClaudeCodeAgent
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("WORKFLOWS_INTEGRATION") != "1",

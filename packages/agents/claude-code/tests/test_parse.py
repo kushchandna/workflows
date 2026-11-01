@@ -1,6 +1,6 @@
 import json
 
-from workflows_agent import (
+from workflows.agent import (
     OtherEvent,
     ReasoningEvent,
     TextEvent,
@@ -9,7 +9,7 @@ from workflows_agent import (
     Usage,
     UsageEvent,
 )
-from workflows_agent_claude_code.parse import events_from_line, usage_from_result
+from workflows.agent_claude_code.parse import events_from_line, usage_from_result
 
 
 def line(obj) -> str:

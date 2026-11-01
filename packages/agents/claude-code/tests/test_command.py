@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from workflows_agent import AgentRequest
-from workflows_agent_claude_code.command import build_command
+from workflows.agent import AgentRequest
+from workflows.agent_claude_code.command import build_command
 
 BASE = [
     "claude",

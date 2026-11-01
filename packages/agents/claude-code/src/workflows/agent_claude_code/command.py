@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from workflows_agent import AgentRequest
+from workflows.agent import AgentRequest
 
 
 def build_command(

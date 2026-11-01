@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from workflows_agent import (
+from workflows.agent import (
     Event,
     OtherEvent,
     ReasoningEvent,

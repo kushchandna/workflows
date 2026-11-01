@@ -1,6 +1,6 @@
 import asyncio
 
-from workflows_agent_claude_code.lines import iter_lines
+from workflows.agent_claude_code.lines import iter_lines
 
 
 def reader(data: bytes) -> asyncio.StreamReader:

@@ -1,6 +1,6 @@
-from workflows_agent.agent import Agent
-from workflows_agent.errors import AgentError, AgentTimeoutError
-from workflows_agent.events import (
+from workflows.agent.agent import Agent
+from workflows.agent.errors import AgentError, AgentTimeoutError
+from workflows.agent.events import (
     BaseEvent,
     Event,
     EventHandler,
@@ -11,7 +11,7 @@ from workflows_agent.events import (
     ToolResultEvent,
     UsageEvent,
 )
-from workflows_agent.models import AgentRequest, AgentResult, Usage
+from workflows.agent.models import AgentRequest, AgentResult, Usage
 
 __all__ = [
     "Agent",

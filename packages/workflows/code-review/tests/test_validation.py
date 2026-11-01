@@ -106,15 +106,6 @@ def test_bad_reply_to_is_removed_but_target_kept(codebase):
     ]
 
 
-def test_bad_target_keeps_a_valid_reply_to(codebase):
-    reply = lines(9, 9)
-    reply = reply.model_copy(update={"reply_to": "t1"})
-    c = check_items([reply], [], scope(codebase))
-    assert c.comments == [
-        Comment(target=ChangeTarget(), body="a.py:9: b", reply_to="t1")
-    ]
-
-
 def test_actions_outside_scope_dropped(codebase):
     c = check_items(
         [],
@@ -153,3 +144,25 @@ def test_read_result_and_usable(tmp_path):
     assert usable_per_file(r, "a.py") and not usable_per_file(r, "b.py")
     assert not usable_per_file(PerFileResult(path="a.py", summary="  "), "a.py")
     assert not usable_per_file(None, "a.py")
+
+
+@pytest.mark.parametrize("path", ["./a.py", "a.py/", "sub//a.py", "sub/./a.py", ""])
+def test_paths_must_be_in_standard_form(codebase, path):
+    # "./a.py" would resolve to a real file but is useless to an end product
+    # that maps comments to positions by path.
+    c = Comment(target=FileTarget(path=path), body="b")
+    assert check_items([c], [], scope(codebase)).had_invalid
+    assert check_items([lines(1, 1, path)], [], scope(codebase)).had_invalid
+
+
+def test_reply_keeps_the_threads_outdated_target(codebase):
+    # Threads keep the position from an earlier version of the change. A reply that
+    # copies it must not be flagged, or every re-run after a push forces a retry.
+    reply = lines(120, 125).model_copy(update={"reply_to": "t1"})
+    c = check_items([reply], [], scope(codebase))
+    assert not c.had_invalid and c.comments == [reply]
+    # but a reply to a thread this call may not touch is still repaired
+    stray = reply.model_copy(update={"reply_to": "t9"})
+    c = check_items([stray], [], scope(codebase))
+    assert c.had_invalid and c.comments[0].reply_to is None
+    assert c.comments[0].target.type == "change"

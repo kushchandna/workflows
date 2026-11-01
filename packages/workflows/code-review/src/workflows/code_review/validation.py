@@ -65,6 +65,8 @@ def target_problem(target: Target, scope: Scope) -> str | None:
     path = PurePosixPath(target.path)
     if path.is_absolute() or ".." in path.parts:
         return f"path leaves the codebase: {target.path}"
+    if str(path) != target.path:  # "./a.py", "a.py/", "a//b.py", ""
+        return f"path is not in standard form: {target.path!r}"
     codebase_file = scope.codebase / target.path if scope.codebase else None
     if scope.allowed_paths is not None:
         if target.path not in scope.allowed_paths:
@@ -87,14 +89,6 @@ def action_problem(action: ThreadAction, scope: Scope) -> str | None:
     return None if action.thread_id in scope.thread_ids else NOT_AVAILABLE
 
 
-def comment_problem(comment: Comment, scope: Scope) -> str | None:
-    if problem := target_problem(comment.target, scope):
-        return problem
-    if comment.reply_to is not None and comment.reply_to not in scope.thread_ids:
-        return f"reply to unknown thread {comment.reply_to}"
-    return None
-
-
 def check_items(
     comments: list[Comment], actions: list[ThreadAction], scope: Scope
 ) -> Checked:
@@ -102,14 +96,18 @@ def check_items(
 
     A comment with a bad target moves to the whole-change level, with its claimed location
     in the body; its ``reply_to`` is kept if that is valid. A comment with only a bad
-    ``reply_to`` loses the ``reply_to``. A thread action outside ``scope.thread_ids`` is
-    dropped.
+    ``reply_to`` loses the ``reply_to``. A reply to a thread this call may act on is kept
+    as it is: its target is the thread's own position, which may be out of date after
+    the change moved on, and the end product posts it by thread id. A thread action
+    outside ``scope.thread_ids`` is dropped.
     """
     result = Checked(comments=[], thread_actions=[], dropped=[], had_invalid=False)
     for comment in comments:
         reply_ok = comment.reply_to is None or comment.reply_to in scope.thread_ids
         reply_to = comment.reply_to if reply_ok else None
-        if target_problem(comment.target, scope):
+        if comment.reply_to is not None and reply_ok:
+            result.comments.append(comment)
+        elif target_problem(comment.target, scope):
             result.had_invalid = True
             result.comments.append(
                 Comment(

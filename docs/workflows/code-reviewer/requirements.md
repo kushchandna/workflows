@@ -139,8 +139,9 @@ to review every file.
    break at top-level directory boundaries once they are filled enough.
 5. **Large files go alone.** A file whose diff exceeds the size budget by
    itself gets its own batch. A single file is never split across sessions.
-6. **Renames and deletions are free.** A file that is only renamed, or that
-   is deleted, counts toward neither limit.
+6. **Renames and deletions count as files.** Every file, a deleted or
+   renamed one included, counts toward the file limit. A deleted file adds no
+   lines to the line limit.
 
 ### Settings
 

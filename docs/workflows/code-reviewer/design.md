@@ -66,8 +66,11 @@ result = await reviewer.review(
   produce many batches, and each call is a full agent process.
 - `agent_timeout_seconds` is passed as every call's timeout.
 - `work_folder`, when given, is used instead of a temporary folder and is
-  kept after the review, so its files can be inspected afterwards. Otherwise
-  the reviewer creates a temporary folder and deletes it.
+  kept after the review, so its files can be inspected afterwards. It must be
+  empty or missing, and it must not be inside the codebase: in git mode the
+  review's own files would show up as untracked changes. Otherwise the
+  reviewer creates a temporary folder and deletes it.
+- Paths given to the reviewer are made absolute before they reach a prompt.
 
 ### Output
 
@@ -102,10 +105,12 @@ result = await reviewer.review(
 
 - `ReviewInputError` is raised before any agent runs for invalid input:
   - neither codebase nor diffs given;
-  - the codebase isn't a git repository, or the base commit doesn't exist;
+  - the codebase path doesn't exist, or, when no diffs folder is given, isn't
+    a git work tree or has no such base commit;
   - the diffs folder is missing;
   - a discussions file isn't valid JSON in the format below, or two threads
-    share an id.
+    share an id;
+  - `work_folder` isn't empty, or is inside the codebase.
 - `AgentError` from any agent call propagates. The other calls in flight are
   cancelled and the review raises. Failures are never reported as a status.
 
@@ -139,11 +144,22 @@ entry has:
   - `git diff --no-index /dev/null <path>` for untracked files.
 
   This gives the same layout as a diffs folder input.
+- Paths are relative to the codebase folder, which may be a subfolder of the
+  repository (`git diff --relative`). Changes outside it are not part of the
+  review. Git is given literal pathspecs, and a base commit starting with `-`
+  is rejected.
+- The written diffs show the files as they are, whatever the user's git config
+  says: no textconv, no external diff driver, no color, and `a/` and `b/`
+  prefixes.
+- An untracked entry git can't diff is skipped: an embedded git repository
+  (`dir/`), a symlink to a directory, or a name that isn't valid UTF-8. It is
+  not reported in the coverage report.
 
 **From a diffs folder:** each `.diff` file is read.
 - Its path inside the folder, minus `.diff`, is the file path.
 - The status comes from the diff header (`new file`, `deleted file`,
-  `rename from`/`rename to`).
+  `rename from`/`rename to`). Git's quoting of unusual characters in the
+  `rename from` path is decoded.
 - A file is binary when the diff contains `Binary files` or
   `GIT binary patch`.
 - The line count is the number of `+` and `-` lines, not counting the
@@ -165,10 +181,10 @@ recorded as skipped with the reason `no changes` (or `only binary files`).
 Non-binary files are batched by the requirements' rules. The algorithm:
 
 1. Sort files by path.
-2. A file counts its `changed_lines` against `lines_per_batch` and counts as
-   one file against `files_per_batch`. A file that is only renamed (no
-   content change) or deleted counts toward neither limit. A rename that also
-   changes content counts normally.
+2. Every file counts as one file against `files_per_batch`, deletions and
+   renames included. A file counts its `changed_lines` against
+   `lines_per_batch`, except that a deleted file adds no lines. A pure rename
+   has no changed lines.
 3. Every file stands alone. There is no grouping of tests with their source.
 4. Walk the sorted list, adding files to the current batch. If adding the
    next file would breach either limit, start a new batch with it.
@@ -234,7 +250,12 @@ The prompt carries:
   all of `input/threads.json` as context, so no pass raises again what's
   already been raised, but only the routed call may reply to or act on a
   thread;
-- the absolute paths of the exact files to read and write.
+- the absolute paths of the exact files to read and write;
+- how to write a path: relative to the codebase folder and exactly as in the
+  file's diff, with no leading `./`, no trailing `/` and no `..`;
+- for a per-file call, that every comment must target a file in its batch.
+  Comments on unchanged files, such as a caller that wasn't updated, are
+  for the other passes.
 
 Prompts name only result files that passed validation, so an invalid or
 missing result is never fed to a later pass.
@@ -319,10 +340,13 @@ What consolidation owns:
   Consolidation sees them as context and can't remove them.
   - Its own `thread_actions` and replies are added on top.
   - It may only act on threads no earlier pass acted on.
-- **The status.** It counts the reviewer's own unresolved threads, those
-  whose first message is by `reviewer_name`. A blocking thread that is still
-  open keeps the status at `changes_requested`, even if nothing new was
-  found.
+- **The status.** `changes_requested` when a remaining comment is a problem
+  that must be fixed before the change can be accepted, or when one of the
+  reviewer's own threads, those whose first message is by `reviewer_name`, is
+  still open and blocking, even if nothing new was found. A thread is judged
+  after applying the thread actions of the earlier passes: a thread an earlier
+  pass resolved no longer blocks, and one it reopened does. `approved` when
+  nothing blocks; suggestions and small remarks alone do not block.
 
 The final result is assembled like this:
 - `comments`: consolidation's new comments, plus the earlier passes' replies,
@@ -343,13 +367,21 @@ A file that fails these is unusable, like a missing one.
 **A comment or thread action** is valid when:
 - every target path is a changed file, or an existing file in the codebase.
   For per-file results it must be a file in the batch. Without a codebase it
-  must be a changed file;
+  must be a changed file. A path must be in standard form: not absolute, no
+  `..`, no `./`, no trailing `/`, no `//`;
 - for a line target, `start_line >= 1` and `end_line >= start_line`. On the
   `new` side, `end_line` is within the file's current length. That check
   needs a codebase and is skipped without one;
 - a `reply_to` or thread action names a thread routed to that call. For
   consolidation, it names a thread that no earlier pass replied to or acted
   on.
+
+A comment whose `reply_to` names a thread the call may act on is valid
+whatever its target says. Its target is the thread's own position, which may
+be out of date after the change moved on, and the end product posts the reply
+by thread id. Otherwise every re-run after a push would flag such replies and
+force a retry. The target is not checked, and the final result replaces it
+with the thread's own target.
 
 **What happens:**
 1. If a call's result file is unusable, or holds any invalid comment or
@@ -359,8 +391,8 @@ A file that fails these is unusable, like a missing one.
    - Valid comments and thread actions are kept.
    - An invalid comment isn't dropped. It's moved to the whole-change level:
      its target becomes `change`, and its body is prefixed with the location
-     it claimed, for example `src/a.py:120-125: ...`. A comment whose
-     `reply_to` was invalid loses the `reply_to` the same way.
+     it claimed, for example `src/a.py:120-125: ...`. A comment with a valid
+     target but an invalid `reply_to` only loses the `reply_to`.
    - An invalid thread action is dropped and recorded in the coverage
      report.
 3. If neither attempt gave a usable file, the file is `unreviewed`, or the
@@ -383,7 +415,9 @@ A file that fails these is unusable, like a missing one.
 3. Per-file retries: after a batch's call, any file whose result is unusable
    or holds invalid comments gets one more call, covering only those files.
    That call writes to `attempt-2/` in the batch's folder, numbered by the
-   retry's own list. Results are then handled as described under Validation,
+   retry's own list. The threads that files not being retried already replied
+   to or acted on are not offered to it, so it cannot post a duplicate
+   reply. Results are then handled as described under Validation,
    and every batch's checked results are merged into
    `review-passes/per-file/`. A file
    with no usable result after the retry is `unreviewed`, with the reason
@@ -420,7 +454,11 @@ job, as in the requirements' pass table.
 - Git tests:
   - share one repository per test module, built once with every scenario:
     committed, staged, unstaged, untracked, ignored, renamed, deleted and
-    binary files;
+    binary files, plus tracked and untracked paths with spaces and non-ASCII
+    characters;
+  - use a few small extra repositories for cases that need their own setup:
+    an embedded repository, and a user diff config such as textconv;
+  - ignore the developer's global git config;
   - are marked `@pytest.mark.git` and left out of the default run (the root
     pytest config adds `-m "not git"`);
   - run with `uv run pytest -m git` when the change-list code changes.
@@ -435,9 +473,12 @@ job, as in the requirements' pass table.
   uncommitted changes.
 - The labeled event log is what's used to investigate a bad review. Nothing
   more is needed for that.
-- Batching uses hard limits on lines and files. Pure renames and deletions
-  count toward neither limit. There's no test-file grouping. The fill needed
-  before breaking at a top-level directory is a setting, defaulting to 0.5.
+- Batching uses hard limits on lines and files. Every file, deletions and
+  renames included, counts toward the file limit; a deleted file adds no
+  lines. This replaced "free" renames and deletions, which let a mass
+  deletion become one batch needing thousands of result files. There's no
+  test-file grouping. The fill needed before breaking at a top-level
+  directory is a setting, defaulting to 0.5.
 - The reviewer's own code runs git and writes the diffs folder before any
   agent runs. Git-ignored files are left out.
 - Work folder layout:
@@ -468,6 +509,10 @@ job, as in the requirements' pass table.
   acted on.
 - Consolidation counts the reviewer's own unresolved blocking threads when
   setting the status.
+- Replies skip target validation, and the final result gives them their
+  thread's own target (confirmed after the code review).
+- An empty change, or one with only binary files, gives `approved` even when
+  the reviewer's own blocking threads are still open (as designed).
 - `change_author` and `reviewer_name` inputs, so the reviewer knows which
   messages are the change author's and which are its own earlier comments
   and replies. It sees its own earlier messages.
@@ -485,9 +530,22 @@ job, as in the requirements' pass table.
 - `LinesTarget.side` (`new`/`old`), so comments on deleted lines can be told
   apart.
 - Comments may target unchanged files, such as a caller that wasn't updated.
-  Per-file results may target only files in their batch.
+  Per-file results may target only files in their batch, and the per-file
+  prompt says so.
 - A failed overall, test coverage or code patterns pass is recorded as
   `failed` and makes the status `inconclusive`. A failed consolidation raises.
 - An empty change gives `approved`, with all passes skipped.
 - The name `directory_break_min_fill`, and defining "filled" as the larger
   of the line and file ratios.
+- Found in the code reviews, and fixed in the code:
+  - the codebase may be a subfolder of the repository (`--relative`);
+  - the written diffs ignore the user's git config (textconv, prefixes,
+    external diff drivers);
+  - untracked entries git can't diff are skipped without a coverage entry;
+  - quoted `rename from` paths are decoded in diffs folders;
+  - target paths must be in standard form and may not leave the codebase;
+  - a retry is not offered the threads that other files already answered;
+  - `work_folder` must not be inside the codebase;
+  - the consolidation prompt separates problems that block from suggestions
+    that don't.
+- Known gaps that were deferred are in `known-issues-and-gaps.md`.

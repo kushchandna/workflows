@@ -183,12 +183,17 @@ Non-binary files are batched by the requirements' rules. The algorithm:
 
 ```
 <work>/
-  input/                                   prepared by our code before any agent runs
-    diffs/<path>.diff                      the change, one diff per file
-    threads.json                           all threads, merged from the discussion files
-  review-passes/
-    per-file/batch-<k>/results/<n>.json    one result per file in batch k
-    per-file/batch-<k>/retry/results/<n>.json
+  input/                                       prepared by our code before any agent runs
+    diffs/<path>.diff                          the change, one diff per file
+    threads.json                               all threads, merged from the discussion files
+  agent-output/                                raw files as agents wrote them
+    per-file/batch-<k>/attempt-<a>/<n>.json    slot n of batch k
+    test-coverage/attempt-<a>/result.json
+    code-patterns/attempt-<a>/result.json
+    overall/attempt-<a>/result.json
+    consolidation/attempt-<a>/result.json
+  review-passes/                               checked results only, written by our code
+    per-file/<path>.json                       one per reviewed file, mirroring input/diffs/
     test-coverage/result.json
     code-patterns/result.json
     overall/result.json
@@ -197,9 +202,18 @@ Non-binary files are batched by the requirements' rules. The algorithm:
 
 - `input/` holds only the review's input. Our code writes it once, before any
   agent runs, and nothing writes to it afterwards.
-- Each pass has its own folder under `review-passes/`. A retry writes into
-  `retry/` inside that folder, so the first attempt's files stay as they
-  were.
+- `agent-output/` is where agents write. Each call has its own folder, and
+  `attempt-1` and `attempt-2` keep the first try and the retry apart. It's
+  the raw record for investigating a review.
+- `review-passes/` holds only checked results, written by our code after a
+  call and its retry. Invalid comments are already moved to the change level
+  and invalid thread actions are dropped, so a later pass can be pointed at
+  the whole folder.
+  - Per-file results from all batches are merged into `per-file/<path>.json`,
+    so the result for `input/diffs/<path>.diff` is at the matching path.
+    Deleted files are under their old path and renamed files under their new
+    path, as with the diffs.
+  - An unreviewed file has no result there.
 - The codebase stays where it is and is never copied.
 
 Each agent call gets:
@@ -208,9 +222,8 @@ Each agent call gets:
 - `extra_folders`: `[<work>]`.
 
 Every agent call:
-- reads from the codebase, from `input/`, and from the folders of passes that
-  have already finished;
-- writes only to its own pass folder.
+- reads from the codebase, from `input/` and from `review-passes/`;
+- writes only to its own folder under `agent-output/`.
 
 The calls run in bypass mode, so none of these reads or writes stops for
 approval.
@@ -254,8 +267,10 @@ format:
   "messages": [{"author": "alice", "body": "Why is this needed?"}]}]
 ```
 
-**Per-file result.** `review-passes/per-file/batch-<k>/results/<n>.json`,
-where `n` is the file's position in the batch's list in the prompt:
+**Per-file result.** Agents write it to
+`agent-output/per-file/batch-<k>/attempt-<a>/<n>.json`, where `n` is the
+file's position in the call's list in the prompt. The checked version goes
+to `review-passes/per-file/<path>.json` in the same format:
 
 ```json
 {"path": "src/a.py",
@@ -273,11 +288,13 @@ where `n` is the file's position in the batch's list in the prompt:
 Only the overall pass may include thread actions; for the others it must be
 empty.
 
-**Consolidation input.** There is no prepared file. Consolidation reads the
-valid result files of every earlier pass, plus `input/threads.json`, from the
-paths its prompt lists. The coverage so far is given in the prompt as text.
+**Consolidation input.** There is no prepared file. Consolidation reads
+`review-passes/` and `input/threads.json`. The coverage so far, including the
+list of unreviewed files and failed passes, is given in the prompt as text.
 
-**Consolidation result** (`review-passes/consolidation/result.json`):
+**Consolidation result** (written to
+`agent-output/consolidation/attempt-<a>/result.json`, checked into
+`review-passes/consolidation/result.json`):
 
 ```json
 {"status": "changes_requested",
@@ -325,6 +342,7 @@ A file that fails these is unusable, like a missing one.
      report.
 3. If neither attempt gave a usable file, the file is `unreviewed`, or the
    pass is `failed`, as described under Running the passes.
+4. The checked result is written to `review-passes/`.
 
 ## Running the passes
 
@@ -340,13 +358,16 @@ A file that fails these is unusable, like a missing one.
 
    Otherwise code patterns is skipped with the reason `no codebase`.
 3. Per-file retries: after a batch's call, any file whose result is unusable
-   or holds invalid comments gets one more call, covering only those files. That call writes to
-   `retry/results/<n>.json` in the batch folder, numbered by the retry's own
-   list. Results are then handled as described under Validation. A file
+   or holds invalid comments gets one more call, covering only those files.
+   That call writes to `attempt-2/` in the batch's folder, numbered by the
+   retry's own list. Results are then handled as described under Validation,
+   and every batch's checked results are merged into
+   `review-passes/per-file/`. A file
    with no usable result after the retry is `unreviewed`, with the reason
    `no valid result after retry`.
-4. Overall runs. It reads the valid per-file results, including their
-   summaries, from the batch folders.
+4. Overall runs once every batch, retries included, is finished and merged.
+   It reads the per-file results, including their summaries, from
+   `review-passes/per-file/`. Its prompt lists the unreviewed files.
 5. Retries for the other passes follow the same rules. A pass with no usable
    result after the retry is recorded as `failed` with the reason.
 6. Consolidation runs last. A missing or invalid result is retried once. If
@@ -385,18 +406,20 @@ job, as in the requirements' pass table.
   agent runs. Git-ignored files are left out.
 - Work folder layout:
   - `input/` holds the diffs and the merged threads;
-  - each pass gets its own folder under `review-passes/`;
+  - agents write raw files to their own folder under `agent-output/`, with
+    one folder per attempt;
+  - our code writes the checked results into `review-passes/`, with the
+    per-file results merged into one tree that mirrors `input/diffs/`;
   - the codebase stays outside and is never copied;
-  - agents read from the codebase, `input/` and finished passes, and write
-    only to their own pass folder.
+  - agents read from the codebase, `input/` and `review-passes/`.
 - The description and instructions go into prompts as text, not files.
 - Invalid comments are kept after the retry by moving them to the
   whole-change level, with their claimed location in the body.
 - Proving that the agent read every hunk of a diff ("hunk receipts") is left
   for later. Coverage is proven by one result per file, with the right path
   and a summary.
-- Passes read earlier passes' result files directly. There are no prepared
-  summary or consolidation input files.
+- Passes read earlier passes' checked results from `review-passes/`. There
+  are no prepared summary or consolidation input files.
 - The workflow relies on its own internal prompts (the agent interface has no
   tool lists).
 - `change_author` and `reviewer_name` inputs, so the reviewer knows which

@@ -8,7 +8,7 @@ An implementation of the agent interface (`docs/agents/requirements.md`) that
 runs the `claude` CLI.
 
 - Distribution `workflows-agent-claude-code`, import
-  `workflows_agent_claude_code`, folder `packages/agents/claude-code/`.
+  `workflows.agent_claude_code`, folder `packages/agents/claude-code/`.
 - Depends on `workflows-agent` and nothing else at runtime.
 - Exposes one class: `ClaudeCodeAgent`.
 

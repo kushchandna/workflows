@@ -7,7 +7,7 @@ stay the authority. This document settles what they left open: the Python
 API, how the reviewer uses agents, the file formats, and the mechanics of
 each pass.
 
-- Distribution `workflows-code-review`, import `workflows_code_review`,
+- Distribution `workflows-code-review`, import `workflows.code_review`,
   folder `packages/workflows/code-review/`.
 - Depends on `workflows-agent` (the interface) and Pydantic. It never depends
   on a concrete agent package.
@@ -34,7 +34,7 @@ event log (see Events). Nothing else is needed for that.
 ## Python API
 
 ```python
-from workflows_code_review import CodeReviewer, ReviewInput, Codebase, ReviewSettings, ReviewPass
+from workflows.code_review import CodeReviewer, ReviewInput, Codebase, ReviewSettings, ReviewPass
 
 reviewer = CodeReviewer(
     default_agent=agent,

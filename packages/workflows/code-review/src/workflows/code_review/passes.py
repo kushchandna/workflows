@@ -1,7 +1,7 @@
 """Running one pass, or one per-file batch, with its single retry."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from workflows.code_review.calls import CallRunner, output_folder
@@ -87,7 +87,19 @@ async def run_per_file_batch(
         if checked is None or checked.had_invalid
     ]
     if redo:
-        second = await _per_file_attempt(runner, ctx, batch_index, 2, redo, scope)
+        # Threads the other files already replied to or acted on are not offered again, so
+        # the retry cannot post a duplicate reply.
+        answered = {
+            thread_id
+            for file, (_, checked) in zip(files, first, strict=True)
+            if checked is not None and file not in redo
+            for thread_id in [
+                *(c.reply_to for c in checked.comments if c.reply_to),
+                *(a.thread_id for a in checked.thread_actions),
+            ]
+        }
+        retry_scope = replace(scope, thread_ids=scope.thread_ids - answered)
+        second = await _per_file_attempt(runner, ctx, batch_index, 2, redo, retry_scope)
         for file, outcome in zip(redo, second, strict=True):
             if outcome[0] is not None:  # the retry's result wins whenever it is usable
                 chosen[file.path] = outcome

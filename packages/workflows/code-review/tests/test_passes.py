@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -303,3 +304,42 @@ async def test_request_wiring(tmp_path, prompt_info):
         [tmp_path],
         12.5,
     )
+
+
+async def test_retry_does_not_offer_threads_already_answered(
+    tmp_path, prompt_info, runner_for
+):
+    # a.py succeeded and replied to t1. Only b.py is retried, so t1 must not be offered again,
+    # or the retry could post a duplicate reply to the same thread.
+    reply = {
+        "target": {"type": "file", "path": "a.py"},
+        "body": "done",
+        "reply_to": "t1",
+    }
+    duplicate = {
+        "target": {"type": "file", "path": "b.py"},
+        "body": "again",
+        "reply_to": "t1",
+    }
+
+    def make(path, attempt):
+        if path == "a.py":
+            return good(path, [reply])
+        return good(path, [duplicate]) if attempt == 2 else None
+
+    agent = FakeAgent(per_file_writer(prompt_info, make))
+    out = await run_per_file_batch(
+        runner_for(agent, tmp_path),
+        ctx(tmp_path),
+        1,
+        files("a.py", "b.py"),
+        scope({"a.py", "b.py"}, ["t1", "t2"]),
+    )
+    offered = [
+        re.findall(r"^Threads you may act on: (.+)$", r.prompt, re.MULTILINE)
+        for r in agent.requests
+    ]
+    assert offered == [["t1, t2"], ["t2"]]
+    assert [c.reply_to for c in out.checked["a.py"].comments] == ["t1"]
+    # the duplicate is not allowed to stay a reply
+    assert [c.reply_to for c in out.checked["b.py"].comments] == [None]

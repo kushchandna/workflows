@@ -80,7 +80,7 @@ passes don't raise the same issue.
 | **Overall** | Once | Whether the change does what the description says, consistency across files, and anything missing (e.g. an API changed but its callers weren't). Gets the per-file summaries as input. | Line-level bugs |
 | **Test coverage** | Once | Whether new and changed behavior is tested and whether tests were updated where needed. Judged by reading code, not by running tests. | Test code quality, which the per-file pass covers |
 | **Code patterns** | Once, only when a codebase is given | Whether the change follows the codebase's existing conventions: naming, error handling, structure, and how similar things are done elsewhere. | General correctness |
-| **Consolidation** | Once, last | Removes duplicate comments across passes and sets the final status. | Finding new issues |
+| **Consolidation** | Once, last | Removes duplicate comments across passes, and new comments that repeat an existing open thread. Sets the final status, counting the reviewer's own unresolved threads. | Finding new issues, or removing replies and thread actions from earlier passes |
 
 ### Order
 
@@ -96,6 +96,11 @@ passes don't raise the same issue.
   - Threads on the whole change go to the overall pass.
 
   That pass decides whether to reply to, resolve or reopen each thread.
+- Every pass can read all existing threads as context, so it doesn't raise
+  again what's already been raised. Only the pass a thread is routed to may
+  reply to it or act on it.
+- Replies and thread actions from the routed passes always reach the output.
+  Consolidation can't remove them.
 - When a pass is skipped, for example code patterns with no codebase, the
   skip is recorded in the coverage report.
 

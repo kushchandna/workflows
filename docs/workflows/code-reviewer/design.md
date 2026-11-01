@@ -230,7 +230,10 @@ approval.
 
 The prompt carries:
 - the description and the review instructions, as text;
-- the ids of the threads this call is responsible for;
+- the ids of the threads this call is responsible for. Every call can read
+  all of `input/threads.json` as context, so no pass raises again what's
+  already been raised, but only the routed call may reply to or act on a
+  thread;
 - the absolute paths of the exact files to read and write.
 
 Prompts name only result files that passed validation, so an invalid or
@@ -302,10 +305,29 @@ list of unreviewed files and failed passes, is given in the prompt as text.
  "thread_actions": [...]}
 ```
 
-Consolidation writes the final comments out in full, whether kept as they
-were or merged into one with new text. It doesn't refer back to earlier
-comments, so which ones were merged shows only in the event log. It may not
-add new issues; its prompt says so.
+What consolidation owns:
+- **New comments only.** It writes the final new comments, meaning those
+  without a `reply_to`, out in full, whether kept as they were or merged into
+  one with new text.
+  - It doesn't refer back to earlier comments, so which ones were merged
+    shows only in the event log.
+  - It drops any new comment that repeats an existing open thread.
+  - It may not add new issues; its prompt says so.
+- **Replies and thread actions from earlier passes always survive.** Our code
+  carries the checked replies (comments with a `reply_to`) and thread actions
+  from the per-file and overall passes into the final result unchanged.
+  Consolidation sees them as context and can't remove them.
+  - Its own `thread_actions` and replies are added on top.
+  - It may only act on threads no earlier pass acted on.
+- **The status.** It counts the reviewer's own unresolved threads, those
+  whose first message is by `reviewer_name`. A blocking thread that is still
+  open keeps the status at `changes_requested`, even if nothing new was
+  found.
+
+The final result is assembled like this:
+- `comments`: consolidation's new comments, plus the earlier passes' replies,
+  plus consolidation's own replies;
+- `thread_actions`: the earlier passes' actions, plus consolidation's own.
 
 ## Validation
 
@@ -326,7 +348,8 @@ A file that fails these is unusable, like a missing one.
   `new` side, `end_line` is within the file's current length. That check
   needs a codebase and is skipped without one;
 - a `reply_to` or thread action names a thread routed to that call. For
-  consolidation it may name any thread.
+  consolidation, it names a thread that no earlier pass replied to or acted
+  on.
 
 **What happens:**
 1. If a call's result file is unusable, or holds any invalid comment or
@@ -437,6 +460,14 @@ job, as in the requirements' pass table.
   are no prepared summary or consolidation input files.
 - The workflow relies on its own internal prompts (the agent interface has no
   tool lists).
+- Every pass reads all threads as context, but only the pass a thread is
+  routed to may reply to it or resolve or reopen it.
+- Replies and thread actions from the routed passes always survive into the
+  final result. Consolidation dedupes new comments only, drops new comments
+  that repeat an open thread, and can add actions only on threads nobody
+  acted on.
+- Consolidation counts the reviewer's own unresolved blocking threads when
+  setting the status.
 - `change_author` and `reviewer_name` inputs, so the reviewer knows which
   messages are the change author's and which are its own earlier comments
   and replies. It sees its own earlier messages.

@@ -2,7 +2,7 @@
 name = "workflows-workspace"
 version = "0"
 requires-python = ">=3.11"
-dependencies = ["workflows-agent", "workflows-agent-claude-code"]
+dependencies = ["workflows-agent", "workflows-agent-claude-code", "workflows-code-review"]
 
 [tool.uv]
 package = false
@@ -10,9 +10,10 @@ package = false
 [tool.uv.sources]
 workflows-agent = { workspace = true }
 workflows-agent-claude-code = { workspace = true }
+workflows-code-review = { workspace = true }
 
 [tool.uv.workspace]
-members = ["packages/agents/*"]
+members = ["packages/agents/*", "packages/workflows/*"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "pyright>=1.1.380"]
@@ -20,7 +21,8 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "pyright>=1.1.380"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib -m 'not git'"
+markers = ["git: runs git; excluded by default, run with -m git"]
 
 [tool.ruff]
 target-version = "py311"

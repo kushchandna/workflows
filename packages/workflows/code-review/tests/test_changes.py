@@ -75,3 +75,15 @@ def test_changes_from_diffs_copies_and_sorts(tmp_path):
 def test_missing_diffs_folder(tmp_path):
     with pytest.raises(ReviewInputError):
         changes_from_diffs(tmp_path / "nope", tmp_path / "out")
+
+
+def test_quoted_rename_paths_are_decoded():
+    # git quotes non-ASCII and special characters in diff headers (core.quotepath=true)
+    text = 'diff --git "a/\\303\\274.py" b/new.py\nrename from "\\303\\274.py"\nrename to new.py\n'
+    assert parse_diff("new.py", text).old_path == "ü.py"
+    text = (
+        'diff --git "a/q\\"t.py" b/new.py\nrename from "q\\"t.py"\nrename to new.py\n'
+    )
+    assert parse_diff("new.py", text).old_path == 'q"t.py'
+    text = 'diff --git "a/tab\\there.py" b/new.py\nrename from "tab\\there.py"\nrename to new.py\n'
+    assert parse_diff("new.py", text).old_path == "tab\there.py"

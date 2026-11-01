@@ -1,5 +1,6 @@
 import shutil
 from dataclasses import dataclass
+from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +27,45 @@ class ChangedFile:
         return frozenset({self.path} | ({self.old_path} if self.old_path else set()))
 
 
+_ESCAPES = {
+    "a": 7,
+    "b": 8,
+    "f": 12,
+    "n": 10,
+    "r": 13,
+    "t": 9,
+    "v": 11,
+    '"': 34,
+    "\\": 92,
+}
+_OCTAL = "01234567"
+
+
+def _unquote(path: str) -> str:
+    """Undo git's C-style quoting of a path in a diff header (core.quotepath)."""
+    if len(path) < 2 or not (path.startswith('"') and path.endswith('"')):
+        return path
+    body = path[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        char = body[i]
+        if char != "\\" or i + 1 == len(body):
+            out += char.encode("utf-8")
+            i += 1
+        elif body[i + 1] in _ESCAPES:
+            out.append(_ESCAPES[body[i + 1]])
+            i += 2
+        elif body[i + 1] in _OCTAL:
+            digits = "".join(takewhile(_OCTAL.__contains__, body[i + 1 : i + 4]))
+            out.append(int(digits, 8) & 0xFF)
+            i += 1 + len(digits)
+        else:
+            out += body[i + 1].encode("utf-8")
+            i += 2
+    return out.decode("utf-8", errors="replace")
+
+
 def diff_file(diffs_dir: Path, path: str) -> Path:
     return diffs_dir / f"{path}.diff"
 
@@ -48,7 +88,7 @@ def parse_diff(path: str, text: str) -> ChangedFile:
             status = "deleted"
         elif line.startswith("rename from "):
             status = "renamed"
-            old_path = line.removeprefix("rename from ")
+            old_path = _unquote(line.removeprefix("rename from "))
         elif line.startswith("Binary files ") or line == "GIT binary patch":
             binary = True
     return ChangedFile(path, status, old_path, binary, changed_lines)

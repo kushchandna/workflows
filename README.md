@@ -51,5 +51,31 @@ uv run pyright
 uv run python scripts/check_isolated_installs.py   # each package alone, in a clean Python 3.11 venv
 ```
 
+## Scripts
+
+- `scripts/check_isolated_installs.py` installs and tests each package alone, in a clean
+  Python 3.11 environment.
+- `scripts/fetch_pull_request.py` prepares a GitHub pull request for the code review workflow.
+  It fetches the pull request's details and discussions, checks out its head, and writes a
+  folder that holds a ready-to-load `ReviewInput`. It does not run the review.
+
+  ```bash
+  export GITHUB_TOKEN=...   # or log in with `gh auth login`
+  uv run python scripts/fetch_pull_request.py https://github.com/OWNER/REPO/pull/123 --output review/pr-123
+  ```
+
+  ```python
+  from pathlib import Path
+
+  from workflows.code_review import ReviewInput
+
+  review_input = ReviewInput.model_validate_json(
+      Path("review/pr-123/review_input.json").read_text()
+  )
+  ```
+
+  Pass `--clone PATH` to reuse a local clone, `--reviewer-name` to name the bot account, and
+  `--instructions-file` to add team guidelines. Run it with `--help` for all options.
+
 The import prefix `workflows` and the distribution prefix `workflows-` are placeholders that
 will be renamed together before anything is published.

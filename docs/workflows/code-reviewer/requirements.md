@@ -119,14 +119,14 @@ to review every file.
 1. **Size budget.** Each batch is filled until it reaches a limit on changed
    lines (added plus removed).
 2. **File cap.** Each batch holds at most a set number of files.
-3. **Related files stay together.**
-   - Files are sorted by path, and batches break at directory boundaries
-     where possible.
-   - A source file and its test file go in the same batch.
-4. **Large files go alone.** A file whose diff exceeds the size budget by
+3. **Hard limits.** A file that would breach either limit goes into the next
+   batch.
+4. **Related files stay together.** Files are sorted by path, and batches
+   break at top-level directory boundaries once they are filled enough.
+5. **Large files go alone.** A file whose diff exceeds the size budget by
    itself gets its own batch. A single file is never split across sessions.
-5. **Cheap files count small.** A file that is only renamed, or that is
-   deleted, counts as a small fixed amount instead of its line count.
+6. **Renames and deletions are free.** A file that is only renamed, or that
+   is deleted, counts toward neither limit.
 
 ### Settings
 
@@ -136,6 +136,7 @@ These have defaults and can be set per workflow instance.
 |---|---|
 | Changed lines per batch | 1,000 |
 | Files per batch | 10 |
+| How full a batch must be before it breaks at a top-level directory | 0.5 |
 
 The defaults are starting points and will be tuned after measuring results.
 
@@ -191,6 +192,8 @@ use the line numbers from before the change.
 ## Out of scope for now
 
 - Comment severity levels.
+- Keeping a source file and its test file in the same batch. Teams name tests
+  differently, so this can't be done reliably without an agent.
 - Splitting a single large file across sessions.
 - Running tests. The test coverage pass judges by reading code only.
 

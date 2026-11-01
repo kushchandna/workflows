@@ -60,7 +60,7 @@ result = await reviewer.review(
 | `Codebase` | `path: Path`, `base_commit: str` |
 | `ReviewInput` | `codebase: Codebase \| None`, `diffs: Path \| None`, `discussions: list[Path] = []`, `description: str \| None`, `instructions: str \| None`. At least one of `codebase` and `diffs` is required. |
 | `ReviewPass` | `PER_FILE`, `OVERALL`, `TEST_COVERAGE`, `CODE_PATTERNS`, `CONSOLIDATION` |
-| `ReviewSettings` | `lines_per_batch: int = 1000`, `files_per_batch: int = 10`, `max_parallel_calls: int = 4`, `agent_timeout_seconds: float \| None = 1800`, `work_folder: Path \| None = None` |
+| `ReviewSettings` | `lines_per_batch: int = 1000`, `files_per_batch: int = 10`, `directory_break_min_fill: float = 0.5`, `max_parallel_calls: int = 4`, `agent_timeout_seconds: float \| None = 1800`, `work_folder: Path \| None = None` |
 
 - `max_parallel_calls` caps how many agent calls run at once. A large MR can
   produce many batches, and each call is a full agent process.
@@ -161,19 +161,18 @@ recorded as skipped with the reason `no changes` (or `only binary files`).
 Non-binary files are batched by the requirements' rules. The algorithm:
 
 1. Sort files by path.
-2. Cost of a file: its `changed_lines`, or 10 if it is only renamed (no
-   content change) or deleted.
-3. Pair each test file with its source file. A test file is one whose name
-   matches `test_*`, `*_test.*`, `*.test.*` or `*.spec.*`, or which sits
-   under a `tests/` or `test/` folder. Its source is the changed file with
-   the same base name minus the test marker. A pair stays together in one
-   batch; its cost is the sum of both.
-4. Walk the sorted list, adding files or pairs to the current batch. Start a
-   new batch when the next item would exceed `lines_per_batch` or
-   `files_per_batch`. Also start a new one when the next item is in a
-   different top-level folder and the current batch is at least half full by
-   cost.
-5. A single item larger than `lines_per_batch` gets its own batch. A file is
+2. A file counts its `changed_lines` against `lines_per_batch` and counts as
+   one file against `files_per_batch`. A file that is only renamed (no
+   content change) or deleted counts toward neither limit. A rename that also
+   changes content counts normally.
+3. Every file stands alone. There is no grouping of tests with their source.
+4. Walk the sorted list, adding files to the current batch. If adding the
+   next file would breach either limit, start a new batch with it.
+5. When the next file is in a different top-level directory, start a new
+   batch if the current one is filled to at least `directory_break_min_fill`.
+   Filled means the larger of lines used out of `lines_per_batch` and files
+   used out of `files_per_batch`.
+6. A single file larger than `lines_per_batch` gets its own batch. A file is
    never split.
 
 ## Work folder
@@ -321,6 +320,11 @@ job, as in the requirements' pass table.
   uncommitted changes.
 - The labeled event log is what's used to investigate a bad review. Nothing
   more is needed for that.
+- Batching uses hard limits on lines and files. Pure renames and deletions
+  count toward neither limit. There's no test-file grouping. The fill needed
+  before breaking at a top-level directory is a setting, defaulting to 0.5.
+- The reviewer's own code runs git and writes the diffs folder before any
+  agent runs. Git-ignored files are left out.
 - The workflow relies on its own internal prompts (the agent interface has no
   tool lists).
 
@@ -342,5 +346,5 @@ job, as in the requirements' pass table.
 - A failed overall, test coverage or code patterns pass is recorded as
   `failed` and makes the status `inconclusive`. A failed consolidation raises.
 - An empty change gives `approved`, with all passes skipped.
-- The batching details: a rename or delete costs 10, the test-file naming
-  rules, and the top-level folder break once a batch is half full.
+- The name `directory_break_min_fill`, and defining "filled" as the larger
+  of the line and file ratios.

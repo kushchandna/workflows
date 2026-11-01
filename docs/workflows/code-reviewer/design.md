@@ -122,7 +122,7 @@ entry has:
 - `status`: added, modified, deleted or renamed;
 - `binary`;
 - `changed_lines`: lines added plus lines removed;
-- its diff file in the work folder.
+- its diff file in `input/diffs/`.
 
 **From a codebase:**
 - `git diff --name-status -M <base>` lists tracked changes, committed and
@@ -130,7 +130,7 @@ entry has:
   files.
 - `git diff --numstat -M <base>` gives line counts. A count of `-` means the
   file is binary.
-- Each file's diff is written to `diffs/<path>.diff` in the work folder:
+- Each file's diff is written to `input/diffs/<path>.diff` in the work folder:
   - `git diff -M <base> -- <old> <new>` for tracked files,
   - `git diff --no-index /dev/null <path>` for untracked files.
 
@@ -144,7 +144,7 @@ entry has:
   `GIT binary patch`.
 - The line count is the number of `+` and `-` lines, not counting the
   `+++`/`---` headers.
-- The diffs are copied into the work folder.
+- The diffs are copied into `input/diffs/`.
 
 When both inputs are given, the change list comes from the diffs folder. The
 codebase is used for reading surrounding code. This is the requirements' rule.
@@ -179,33 +179,54 @@ Non-binary files are batched by the requirements' rules. The algorithm:
 
 ```
 <work>/
-  diffs/<path>.diff                     the change, one diff per file
-  input/description.md                  when given
-  input/instructions.md                 when given
-  input/threads/<pass or batch>.json    the threads routed to that call
-  input/summaries.json                  per-file summaries, for the overall pass
-  input/consolidation.json              everything consolidation needs
-  output/per-file/<batch>/<n>.json      one result per file in the batch
-  output/overall.json
-  output/test-coverage.json
-  output/code-patterns.json
-  output/final.json                     consolidation's result
+  input/                                   prepared by our code before any agent runs
+    diffs/<path>.diff                      the change, one diff per file
+    threads.json                           all threads, merged from the discussion files
+  review-passes/
+    per-file/batch-<k>/results/<n>.json    one result per file in batch k
+    per-file/batch-<k>/retry/results/<n>.json
+    test-coverage/result.json
+    code-patterns/result.json
+    overall/result.json
+    consolidation/result.json
 ```
+
+- `input/` holds only the review's input. Our code writes it once, before any
+  agent runs, and nothing writes to it afterwards.
+- Each pass has its own folder under `review-passes/`. A retry writes into
+  `retry/` inside that folder, so the first attempt's files stay as they
+  were.
+- The codebase stays where it is and is never copied.
 
 Each agent call gets:
 - `working_folder`: the codebase path, or the work folder when only diffs
   were given;
 - `extra_folders`: `[<work>]`.
 
-The prompt names the exact input files to read and the exact output files to
-write, with absolute paths.
+Every agent call:
+- reads from the codebase, from `input/`, and from the folders of passes that
+  have already finished;
+- writes only to its own pass folder.
+
+The calls run in bypass mode, so none of these reads or writes stops for
+approval.
+
+The prompt carries:
+- the description and the review instructions, as text;
+- the ids of the threads this call is responsible for;
+- the absolute paths of the exact files to read and write.
+
+Prompts name only result files that passed validation, so an invalid or
+missing result is never fed to a later pass.
 
 ## File formats
 
 All files are JSON and validated with Pydantic models. The schemas are part
 of the package. Targets use the `Target` shape from Output in every file.
 
-**Discussions (input).** Each file holds a list of threads:
+**Discussions (input).** Each discussion file the end product passes holds a
+list of threads. Our code merges them into `input/threads.json`, in the same
+format:
 
 ```json
 [{"id": "t1",
@@ -214,8 +235,8 @@ of the package. Targets use the `Target` shape from Output in every file.
   "messages": [{"author": "alice", "body": "Why is this needed?"}]}]
 ```
 
-**Per-file result.** `output/per-file/<batch>/<n>.json`, where `n` is the
-file's position in the batch's list in the prompt:
+**Per-file result.** `review-passes/per-file/batch-<k>/results/<n>.json`,
+where `n` is the file's position in the batch's list in the prompt:
 
 ```json
 {"path": "src/a.py",
@@ -233,14 +254,11 @@ file's position in the batch's list in the prompt:
 Only the overall pass may include thread actions; for the others it must be
 empty.
 
-**Consolidation input** (`input/consolidation.json`):
-- every comment from every pass, each with an id (`c1`, `c2`, ...) and the
-  pass it came from;
-- every thread action, each with the pass it came from;
-- the threads;
-- the coverage so far.
+**Consolidation input.** There is no prepared file. Consolidation reads the
+valid result files of every earlier pass, plus `input/threads.json`, from the
+paths its prompt lists. The coverage so far is given in the prompt as text.
 
-**Consolidation result** (`output/final.json`):
+**Consolidation result** (`review-passes/consolidation/result.json`):
 
 ```json
 {"status": "changes_requested",
@@ -248,7 +266,9 @@ empty.
  "thread_actions": [...]}
 ```
 
-Consolidation may merge duplicate comments into one with new text. It may not
+Consolidation writes the final comments out in full, whether kept as they
+were or merged into one with new text. It doesn't refer back to earlier
+comments, so which ones were merged shows only in the event log. It may not
 add new issues; its prompt says so.
 
 ## Validation
@@ -283,11 +303,12 @@ invalid.
    Otherwise code patterns is skipped with the reason `no codebase`.
 3. Per-file retries: after a batch's call, any file without a valid result
    gets one more call covering only those files. That call writes to
-   `output/per-file/<batch>/retry/<n>.json`, numbered by the retry's own
+   `retry/results/<n>.json` in the batch folder, numbered by the retry's own
    list. A file still without a
    valid result is `unreviewed`, with the reason `no valid result after
    retry`.
-4. Overall runs with the per-file summaries of the reviewed files.
+4. Overall runs. It reads the valid per-file results, including their
+   summaries, from the batch folders.
 5. Retries for the other passes: the same pass is called once more when its
    output is missing or invalid. If it still fails, the pass is recorded as
    `failed` with the reason, and its comments are lost.
@@ -297,8 +318,8 @@ invalid.
 7. Final status: consolidation's status, except it becomes `inconclusive`
    when any file is `unreviewed` or any pass `failed`.
 
-Every call gets the review instructions and the description through the
-input files. Each pass has its own prompt template in the package
+Every call gets the review instructions and the description as text in its
+prompt. Each pass has its own prompt template in the package
 (`prompts/<pass>.md`). The prompt states the pass's job and what is not its
 job, as in the requirements' pass table.
 
@@ -325,6 +346,15 @@ job, as in the requirements' pass table.
   before breaking at a top-level directory is a setting, defaulting to 0.5.
 - The reviewer's own code runs git and writes the diffs folder before any
   agent runs. Git-ignored files are left out.
+- Work folder layout:
+  - `input/` holds the diffs and the merged threads;
+  - each pass gets its own folder under `review-passes/`;
+  - the codebase stays outside and is never copied;
+  - agents read from the codebase, `input/` and finished passes, and write
+    only to their own pass folder.
+- The description and instructions go into prompts as text, not files.
+- Passes read earlier passes' result files directly. There are no prepared
+  summary or consolidation input files.
 - The workflow relies on its own internal prompts (the agent interface has no
   tool lists).
 

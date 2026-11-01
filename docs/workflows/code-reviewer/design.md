@@ -288,20 +288,39 @@ add new issues; its prompt says so.
 
 ## Validation
 
-A result file is valid only if all of these hold. Otherwise the whole file is
-invalid.
+Validation works at two levels: the file and each comment.
 
-- It parses and matches its schema.
-- A per-file result's `path` is the file the prompt assigned to that slot,
-  and its `summary` isn't empty.
-- Every target path is a changed file or an existing file in the codebase.
-  For per-file results it must be a file in the batch.
-- For line targets, `start_line >= 1`, `end_line >= start_line`, and on the
-  `new` side `end_line` is within the file's current length. The length check
-  needs a codebase and is skipped without one.
-- Without a codebase, every target path must be a changed file.
-- Every `reply_to` and every thread action names a thread routed to that
-  call. For consolidation, it names any thread.
+**A result file** is valid when:
+- it parses and matches its schema;
+- for a per-file result, its `path` is the file the prompt assigned to that
+  slot, and its `summary` isn't empty.
+
+A file that fails these is unusable, like a missing one.
+
+**A comment or thread action** is valid when:
+- every target path is a changed file, or an existing file in the codebase.
+  For per-file results it must be a file in the batch. Without a codebase it
+  must be a changed file;
+- for a line target, `start_line >= 1` and `end_line >= start_line`. On the
+  `new` side, `end_line` is within the file's current length. That check
+  needs a codebase and is skipped without one;
+- a `reply_to` or thread action names a thread routed to that call. For
+  consolidation it may name any thread.
+
+**What happens:**
+1. If a call's result file is unusable, or holds any invalid comment or
+   thread action, the call is retried once.
+2. After the retry, the best result is used: the retry's if it's usable,
+   otherwise the first attempt's.
+   - Valid comments and thread actions are kept.
+   - An invalid comment isn't dropped. It's moved to the whole-change level:
+     its target becomes `change`, and its body is prefixed with the location
+     it claimed, for example `src/a.py:120-125: ...`. A comment whose
+     `reply_to` was invalid loses the `reply_to` the same way.
+   - An invalid thread action is dropped and recorded in the coverage
+     report.
+3. If neither attempt gave a usable file, the file is `unreviewed`, or the
+   pass is `failed`, as described under Running the passes.
 
 ## Running the passes
 
@@ -316,17 +335,16 @@ invalid.
    - code patterns, only when a codebase is given.
 
    Otherwise code patterns is skipped with the reason `no codebase`.
-3. Per-file retries: after a batch's call, any file without a valid result
-   gets one more call covering only those files. That call writes to
+3. Per-file retries: after a batch's call, any file whose result is unusable
+   or holds invalid comments gets one more call, covering only those files. That call writes to
    `retry/results/<n>.json` in the batch folder, numbered by the retry's own
-   list. A file still without a
-   valid result is `unreviewed`, with the reason `no valid result after
-   retry`.
+   list. Results are then handled as described under Validation. A file
+   with no usable result after the retry is `unreviewed`, with the reason
+   `no valid result after retry`.
 4. Overall runs. It reads the valid per-file results, including their
    summaries, from the batch folders.
-5. Retries for the other passes: the same pass is called once more when its
-   output is missing or invalid. If it still fails, the pass is recorded as
-   `failed` with the reason, and its comments are lost.
+5. Retries for the other passes follow the same rules. A pass with no usable
+   result after the retry is recorded as `failed` with the reason.
 6. Consolidation runs last. A missing or invalid result is retried once. If
    it still fails, the review raises `AgentError`, since there is no result
    to report.
@@ -368,6 +386,11 @@ job, as in the requirements' pass table.
   - agents read from the codebase, `input/` and finished passes, and write
     only to their own pass folder.
 - The description and instructions go into prompts as text, not files.
+- Invalid comments are kept after the retry by moving them to the
+  whole-change level, with their claimed location in the body.
+- Proving that the agent read every hunk of a diff ("hunk receipts") is left
+  for later. Coverage is proven by one result per file, with the right path
+  and a summary.
 - Passes read earlier passes' result files directly. There are no prepared
   summary or consolidation input files.
 - The workflow relies on its own internal prompts (the agent interface has no
@@ -390,7 +413,6 @@ job, as in the requirements' pass table.
   apart.
 - Comments may target unchanged files, such as a caller that wasn't updated.
   Per-file results may target only files in their batch.
-- A result file is valid or invalid as a whole. There is no partial salvage.
 - A failed overall, test coverage or code patterns pass is recorded as
   `failed` and makes the status `inconclusive`. A failed consolidation raises.
 - An empty change gives `approved`, with all passes skipped.

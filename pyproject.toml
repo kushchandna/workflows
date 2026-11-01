@@ -31,5 +31,5 @@ target-version = "py311"
 known-first-party = ["workflows"]
 
 [tool.pyright]
-include = ["packages", "tests"]
+include = ["packages", "tests", "scripts"]
 pythonVersion = "3.11"

@@ -16,11 +16,9 @@ class ChangedFile:
     changed_lines: int  # added plus removed
 
     @property
-    def counts_toward_limits(self) -> bool:
-        """Deletions and pure renames are free; they count toward no batch limit."""
-        if self.status == "deleted":
-            return False
-        return not (self.status == "renamed" and self.changed_lines == 0)
+    def batch_lines(self) -> int:
+        """Lines this file adds to a batch's line budget. A deleted file adds none."""
+        return 0 if self.status == "deleted" else self.changed_lines
 
     @property
     def paths(self) -> frozenset[str]:

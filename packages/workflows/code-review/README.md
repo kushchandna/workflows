@@ -101,8 +101,8 @@ it or reopen it. Those replies and actions always reach the result.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `lines_per_batch` | 1000 | Most changed lines in a per-file batch. |
-| `files_per_batch` | 10 | Most files in a per-file batch. Pure renames and deletions count toward neither limit. |
+| `lines_per_batch` | 1000 | Most changed lines in a per-file batch. A deleted file adds none. |
+| `files_per_batch` | 10 | Most files in a per-file batch. Every file counts, deletions and renames included. |
 | `directory_break_min_fill` | 0.5 | How full a batch must be before it breaks at a new top-level directory. |
 | `max_parallel_calls` | 4 | Most agent calls running at once. |
 | `agent_timeout_seconds` | 1800 | Timeout of every agent call (`None` for no timeout). |

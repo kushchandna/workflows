@@ -11,18 +11,17 @@ def make_batches(
 ) -> list[list[ChangedFile]]:
     """Group non-binary files into batches, one agent call each.
 
-    Files are sorted by path. A file that would breach the line or file limit starts the
-    next batch, and a file larger than the line limit ends up alone. Pure renames and
-    deletions count toward neither limit. Moving to a new top-level directory also starts
-    a batch once the current one is filled to ``directory_break_min_fill``.
+    Files are sorted by path. Every file counts as one toward the file limit, deletions and
+    renames included. Its changed lines count toward the line limit, except for a deleted
+    file's. A file that would breach either limit starts the next batch, and a file larger
+    than the line limit ends up alone. Moving to a new top-level directory also starts a
+    batch once the current one is filled to ``directory_break_min_fill``.
     """
     batches: list[list[ChangedFile]] = []
     current: list[ChangedFile] = []
     lines = count = 0
     for file in sorted(files, key=lambda f: f.path):
-        add_lines, add_files = (
-            (file.changed_lines, 1) if file.counts_toward_limits else (0, 0)
-        )
+        add_lines, add_files = file.batch_lines, 1
         if current:
             breach = (
                 lines + add_lines > settings.lines_per_batch

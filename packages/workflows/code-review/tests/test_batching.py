@@ -40,12 +40,33 @@ def test_file_limit_is_hard():
     assert paths(make_batches([f("a"), f("b"), f("c")], s)) == [["a", "b"], ["c"]]
 
 
-def test_renames_and_deletions_are_free():
+def test_deletions_add_no_lines():
     s = ReviewSettings(
-        lines_per_batch=100, files_per_batch=1, directory_break_min_fill=1
+        lines_per_batch=100, files_per_batch=10, directory_break_min_fill=1
     )
-    files = [f("a", 100), f("b", 0, "renamed"), f("c", 50, "deleted")]
+    files = [f("a", 100), f("b", 500, "deleted"), f("c", 0, "renamed")]
     assert paths(make_batches(files, s)) == [["a", "b", "c"]]
+
+
+def test_deletions_and_renames_count_toward_the_file_limit():
+    s = ReviewSettings(
+        lines_per_batch=1000, files_per_batch=2, directory_break_min_fill=1
+    )
+    files = [
+        f("a", 5),
+        f("b", 0, "renamed"),
+        f("c", 9, "deleted"),
+        f("d", 0, "renamed"),
+    ]
+    assert paths(make_batches(files, s)) == [["a", "b"], ["c", "d"]]
+
+
+def test_many_deletions_are_split_by_the_file_limit():
+    s = ReviewSettings(
+        lines_per_batch=1000, files_per_batch=10, directory_break_min_fill=1
+    )
+    files = [f(f"vendor/{i:03}.py", 100, "deleted") for i in range(25)]
+    assert [len(b) for b in make_batches(files, s)] == [10, 10, 5]
 
 
 def test_renamed_with_edits_counts():

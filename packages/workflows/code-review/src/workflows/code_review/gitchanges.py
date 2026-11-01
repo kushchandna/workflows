@@ -119,6 +119,8 @@ def changes_from_git(codebase: Codebase, diffs_dir: Path) -> list[ChangedFile]:
         _write(diffs_dir, path, diff)
 
     for path in _tokens(_run(cwd, "ls-files", "--others", "--exclude-standard", "-z")):
+        if path.endswith("/"):  # an embedded git repository, not a file
+            continue
         diff = _run(
             cwd,
             "diff",
@@ -130,6 +132,8 @@ def changes_from_git(codebase: Codebase, diffs_dir: Path) -> list[ChangedFile]:
             path,
             ok=(0, 1),
         )
+        if not diff:  # git cannot diff it, for example a symlink to a directory
+            continue
         _write(diffs_dir, path, diff)
         files.append(parse_diff(path, diff.decode("utf-8", errors="replace")))
 

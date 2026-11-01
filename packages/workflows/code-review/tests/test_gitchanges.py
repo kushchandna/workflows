@@ -127,3 +127,27 @@ def test_check_codebase_errors(repo, tmp_path):
         check_codebase(Codebase(path=r, base_commit="0" * 40))
     with pytest.raises(ReviewInputError):
         check_codebase(Codebase(path=r, base_commit="--output=x"))
+
+
+def test_untracked_entries_git_cannot_diff_are_skipped(tmp_path):
+    r = tmp_path / "repo"
+    r.mkdir()
+    git(r, "init", "-q")
+    git(r, "commit", "-q", "--allow-empty", "-m", "base")
+    base = git(r, "rev-parse", "HEAD").strip()
+    nested = r / "nested"  # a stray clone inside the workspace
+    nested.mkdir()
+    git(nested, "init", "-q")
+    (nested / "f").write_text("x\n")
+    git(nested, "add", "f")
+    git(nested, "commit", "-qm", "n")
+    (r / "empty.txt").write_text("")
+    (r / "real.py").write_text("a\n")
+    files = {
+        f.path: f
+        for f in changes_from_git(
+            Codebase(path=r, base_commit=base), tmp_path / "diffs"
+        )
+    }
+    assert set(files) == {"empty.txt", "real.py"}
+    assert {f.status for f in files.values()} == {"added"}

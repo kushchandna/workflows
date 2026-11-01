@@ -44,6 +44,15 @@ present.
 
 Free text describing the change.
 
+### Change author and reviewer name
+
+- **Change author:** the name of the person who made the change, for example
+  the MR author. Messages in threads by this name are the author's replies.
+- **Reviewer name:** the name the reviewer's own comments appear under, for
+  example the bot's account. Messages by this name are the reviewer's own
+  earlier comments and replies, which it can see and follow up on.
+- Both are matched against the `author` of thread messages.
+
 ### Review instructions
 
 - Free text telling the reviewer what to focus on or which rules to apply.

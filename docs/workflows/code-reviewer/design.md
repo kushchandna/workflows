@@ -58,7 +58,7 @@ result = await reviewer.review(
 | Type | Fields |
 |---|---|
 | `Codebase` | `path: Path`, `base_commit: str` |
-| `ReviewInput` | `codebase: Codebase \| None`, `diffs: Path \| None`, `discussions: list[Path] = []`, `description: str \| None`, `instructions: str \| None`. At least one of `codebase` and `diffs` is required. |
+| `ReviewInput` | `codebase: Codebase \| None`, `diffs: Path \| None`, `discussions: list[Path] = []`, `description: str \| None`, `instructions: str \| None`, `change_author: str \| None`, `reviewer_name: str \| None`. At least one of `codebase` and `diffs` is required. |
 | `ReviewPass` | `PER_FILE`, `OVERALL`, `TEST_COVERAGE`, `CODE_PATTERNS`, `CONSOLIDATION` |
 | `ReviewSettings` | `lines_per_batch: int = 1000`, `files_per_batch: int = 10`, `directory_break_min_fill: float = 0.5`, `max_parallel_calls: int = 4`, `agent_timeout_seconds: float \| None = 1800`, `work_folder: Path \| None = None` |
 
@@ -224,6 +224,21 @@ missing result is never fed to a later pass.
 All files are JSON and validated with Pydantic models. The schemas are part
 of the package. Targets use the `Target` shape from Output in every file.
 
+**Who wrote each message.** A message's `author` is matched by exact string
+against the review input:
+- `change_author`: the message is from the person who made the change, such
+  as the MR author pushing back on a concern or saying it's fixed;
+- `reviewer_name`: the message is the reviewer's own earlier comment or reply,
+  from a previous run.
+
+The prompts tell the passes to:
+- weigh the change author's replies before resolving a thread;
+- treat their own earlier comments as theirs: follow up on them and don't
+  repeat them.
+
+End products pass threads with the reviewer's own messages included, so the
+reviewer can see what it said before.
+
 **Discussions (input).** Each discussion file the end product passes holds a
 list of threads. Our code merges them into `input/threads.json`, in the same
 format:
@@ -357,6 +372,9 @@ job, as in the requirements' pass table.
   summary or consolidation input files.
 - The workflow relies on its own internal prompts (the agent interface has no
   tool lists).
+- `change_author` and `reviewer_name` inputs, so the reviewer knows which
+  messages are the change author's and which are its own earlier comments
+  and replies. It sees its own earlier messages.
 
 ## Claude's calls (overridable)
 

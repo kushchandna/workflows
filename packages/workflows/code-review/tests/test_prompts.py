@@ -139,3 +139,13 @@ def test_paths_are_relative_to_the_codebase_folder():
     p = per_file_prompt(CTX, Path("/o"), [(1, "a.py")], [])
     assert "relative to the codebase folder" in p
     assert "repository root" not in p
+
+
+def test_consolidation_status_only_blocks_on_real_problems():
+    p = " ".join(
+        consolidation_prompt(CTX, Path("/o"), [], "nothing").split()
+    )  # unwrap lines
+    assert "suggestions and small remarks alone do not block" in p
+    assert "must be fixed before the change can be accepted" in p
+    # an earlier pass's resolve or reopen decides whether the reviewer's own thread still blocks
+    assert "after applying the thread actions" in p

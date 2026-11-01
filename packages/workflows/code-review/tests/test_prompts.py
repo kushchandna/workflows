@@ -116,3 +116,26 @@ def test_text_with_dollar_signs_is_inserted_verbatim():
 def test_prompt_says_how_to_write_paths():
     p = per_file_prompt(CTX, Path("/o"), [(1, "a.py")], [])
     assert 'no leading "./"' in p
+
+
+def test_per_file_prompt_keeps_targets_inside_the_batch():
+    # validation only accepts per-file targets in the batch, so the prompt must not invite more
+    p = per_file_prompt(CTX, Path("/o"), [(1, "a.py")], [])
+    assert "unchanged file" not in p
+    assert "must be a file in this batch" in p
+
+
+@pytest.mark.parametrize(
+    "review_pass",
+    [ReviewPass.OVERALL, ReviewPass.TEST_COVERAGE, ReviewPass.CODE_PATTERNS],
+)
+def test_other_passes_may_point_at_unchanged_files(review_pass):
+    p = pass_prompt(CTX, review_pass, Path("/o"), ["a.py"], [], [])
+    assert "unchanged files" in p
+
+
+def test_paths_are_relative_to_the_codebase_folder():
+    # git mode reports paths relative to the codebase folder, which may be a repo subfolder
+    p = per_file_prompt(CTX, Path("/o"), [(1, "a.py")], [])
+    assert "relative to the codebase folder" in p
+    assert "repository root" not in p

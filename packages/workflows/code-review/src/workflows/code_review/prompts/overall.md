@@ -13,6 +13,8 @@ Your job:
 Not your job: line-level bugs, which the per-file pass covers. Do not repeat comments that
 are already in the per-file results.
 
+Comments may also point at unchanged files, for example a caller that was not updated.
+
 Changed files:
 $changed
 

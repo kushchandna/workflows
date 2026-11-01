@@ -16,6 +16,9 @@ Not your job (other passes cover these):
 - whether the change is tested;
 - whether the change follows the codebase's conventions.
 
+Every comment's target must be a file in this batch. Leave problems in other files to the
+other passes.
+
 Files in this batch. The diff of each is at $diffs_dir/<path>.diff:
 
 $slots

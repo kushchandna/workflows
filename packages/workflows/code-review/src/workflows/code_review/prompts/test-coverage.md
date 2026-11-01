@@ -5,6 +5,8 @@ updated where the change needs it. Judge by reading the code. Do not run any tes
 
 Not your job: the quality of the test code, which the per-file pass covers.
 
+Comments may also point at unchanged files, for example a caller that was not updated.
+
 Changed files:
 $changed
 

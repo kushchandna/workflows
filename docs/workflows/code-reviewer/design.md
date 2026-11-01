@@ -385,13 +385,26 @@ job, as in the requirements' pass table.
 
 - Unit tests use only the core `FakeAgent`. Its `respond` function reads the
   request's prompt to find the output paths, and writes chosen result files:
-  valid, invalid or missing.
-- Git-based tests create small real repositories in `tmp_path`, covering:
-  committed, staged, unstaged, untracked, renamed, deleted and binary files.
+  valid, partly invalid, unusable or missing. These tests cover:
+  - retries;
+  - moving invalid comments to the change level;
+  - merging into `review-passes/per-file/`;
+  - status and coverage.
+- Only the code that builds the change list from a codebase runs `git`.
+  Batching, validation, the passes, retries, merging and status are tested
+  with change lists built directly in the test, or with diffs folders. Most
+  tests never touch git.
+- Git tests:
+  - share one repository per test module, built once with every scenario:
+    committed, staged, unstaged, untracked, ignored, renamed, deleted and
+    binary files;
+  - are marked `@pytest.mark.git` and left out of the default run (the root
+    pytest config adds `-m "not git"`);
+  - run with `uv run pytest -m git` when the change-list code changes.
 - Diffs-folder parsing gets tests for each header form.
-- A gated integration test in the repo root's `tests/integration/` runs a
-  real review with `ClaudeCodeAgent` on a tiny repository. It's skipped
-  unless `WORKFLOWS_INTEGRATION=1` is set.
+- Batching gets tests for the hard limits, free renames and deletions,
+  oversized files and the top-level directory break.
+- No integration test against a real agent for now.
 
 ## Decided by the user
 
@@ -415,6 +428,8 @@ job, as in the requirements' pass table.
 - The description and instructions go into prompts as text, not files.
 - Invalid comments are kept after the retry by moving them to the
   whole-change level, with their claimed location in the body.
+- Git-based tests are kept few, share one repository per module, and run
+  only on request (`-m git`). No real-agent integration test for now.
 - Proving that the agent read every hunk of a diff ("hunk receipts") is left
   for later. Coverage is proven by one result per file, with the right path
   and a summary.

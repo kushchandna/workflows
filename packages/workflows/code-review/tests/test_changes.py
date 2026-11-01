@@ -38,13 +38,13 @@ def test_modified_counts_only_hunk_lines():
 def test_added_deleted_renamed_binary():
     assert parse_diff("n.py", ADDED).status == "added"
     d = parse_diff("d.py", DELETED)
-    assert d.status == "deleted" and not d.counts_toward_limits
+    assert d.status == "deleted" and d.batch_lines == 0
     r = parse_diff("new.py", RENAMED)
-    assert (r.status, r.old_path, r.changed_lines, r.counts_toward_limits) == (
+    assert (r.status, r.old_path, r.changed_lines, r.batch_lines) == (
         "renamed",
         "old.py",
         0,
-        False,
+        0,
     )
     assert r.paths == {"new.py", "old.py"}
     assert parse_diff("i.png", BINARY).binary
@@ -58,7 +58,7 @@ def test_git_binary_patch_is_binary():
 def test_renamed_with_edits_counts():
     text = RENAMED + "--- a/old.py\n+++ b/new.py\n@@ -1 +1 @@\n-a\n+b\n"
     f = parse_diff("new.py", text)
-    assert f.counts_toward_limits and f.changed_lines == 2
+    assert f.changed_lines == 2 and f.batch_lines == 2
 
 
 def test_changes_from_diffs_copies_and_sorts(tmp_path):

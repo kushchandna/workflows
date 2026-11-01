@@ -6,10 +6,10 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from uuid import uuid4
 
-from workflows_agent.agent import Agent
-from workflows_agent.errors import AgentTimeoutError
-from workflows_agent.events import Event, EventHandler
-from workflows_agent.models import AgentRequest, AgentResult
+from workflows.agent.agent import Agent
+from workflows.agent.errors import AgentTimeoutError
+from workflows.agent.events import Event, EventHandler
+from workflows.agent.models import AgentRequest, AgentResult
 
 Respond = Callable[[AgentRequest], str | AgentResult | Awaitable[str | AgentResult]]
 

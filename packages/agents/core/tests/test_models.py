@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from workflows_agent import AgentRequest, AgentResult, Usage
+from workflows.agent import AgentRequest, AgentResult, Usage
 
 
 def test_request_defaults():

@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
-from workflows_agent.events import EventHandler
-from workflows_agent.models import AgentRequest, AgentResult
+from workflows.agent.events import EventHandler
+from workflows.agent.models import AgentRequest, AgentResult
 
 
 class Agent(ABC):

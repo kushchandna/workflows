@@ -5,9 +5,9 @@ import time
 
 import pytest
 
-from workflows_agent import AgentRequest, AgentTimeoutError
-from workflows_agent_claude_code import ClaudeCodeAgent
-from workflows_agent_claude_code.process import stop_process_group
+from workflows.agent import AgentRequest, AgentTimeoutError
+from workflows.agent_claude_code import ClaudeCodeAgent
+from workflows.agent_claude_code.process import stop_process_group
 
 
 def alive(pid: int) -> bool:

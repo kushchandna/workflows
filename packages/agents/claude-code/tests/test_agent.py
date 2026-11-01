@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from workflows_agent import (
+from workflows.agent import (
     AgentError,
     AgentRequest,
     AgentTimeoutError,
@@ -15,7 +15,7 @@ from workflows_agent import (
     Usage,
     UsageEvent,
 )
-from workflows_agent_claude_code import ClaudeCodeAgent
+from workflows.agent_claude_code import ClaudeCodeAgent
 
 
 @pytest.fixture

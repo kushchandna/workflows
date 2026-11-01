@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from workflows_agent import (
+from workflows.agent import (
     Agent,
     AgentError,
     AgentRequest,
@@ -15,10 +15,10 @@ from workflows_agent import (
     EventHandler,
     UsageEvent,
 )
-from workflows_agent_claude_code.command import build_command
-from workflows_agent_claude_code.lines import iter_lines
-from workflows_agent_claude_code.parse import events_from_line, usage_from_result
-from workflows_agent_claude_code.process import stop_process_group, wait_for_exit
+from workflows.agent_claude_code.command import build_command
+from workflows.agent_claude_code.lines import iter_lines
+from workflows.agent_claude_code.parse import events_from_line, usage_from_result
+from workflows.agent_claude_code.process import stop_process_group, wait_for_exit
 
 
 class ClaudeCodeAgent(Agent):

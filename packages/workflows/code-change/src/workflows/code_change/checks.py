@@ -90,6 +90,8 @@ async def _run_one(
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=cwd,
+            # A check must not read, or hold up, the caller's own input.
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,

@@ -131,3 +131,18 @@ async def test_cancellation_kills_the_check(tmp_path):
         await asyncio.sleep(0.1)
     else:
         pytest.fail("the check is still running")
+
+
+async def test_checks_do_not_read_the_callers_stdin(tmp_path):
+    read_end, write_end = os.pipe()
+    os.write(write_end, b"secret\n")
+    os.close(write_end)
+    saved = os.dup(0)
+    os.dup2(read_end, 0)
+    os.close(read_end)
+    try:
+        [r] = await run(tmp_path, ['read x && echo "got:$x" || echo eof'])
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+    assert r.output == "eof\n"

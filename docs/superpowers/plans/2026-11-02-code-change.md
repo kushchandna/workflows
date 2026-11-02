@@ -29,6 +29,7 @@ Stacked branches, one per task, each branched from the one before:
 | 5 | `code-change-5-loop` | `code-change-4-prompts` |
 | 6 | `code-change-6-changer` | `code-change-5-loop` |
 
+- If `dev` doesn't exist locally or on origin, run `git checkout main && git pull origin main`, then `git checkout -b dev && git push -u origin dev`.
 - Push each branch with `git push -u origin <branch>` when its task is done.
 - Never merge into `dev` or `main`, and never open pull requests. The user raises and reviews them one by one.
 - If a later task needs a fix in an earlier branch, commit it on the earlier branch and rebase the branches above it.

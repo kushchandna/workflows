@@ -120,7 +120,9 @@ Its verdict is one of:
 - The agent gets what went wrong: the commit check's reason, the failing
   checks' output, or the review's comments.
 - It fixes the problem with new commits on top of its earlier ones. It doesn't
-  amend or rewrite them.
+  amend or rewrite them. The exception is a commit check that failed because
+  commits were rewritten or the agent left the starting branch: the agent is
+  told how to put the repository back first.
 - Commits from all tries together form the change.
 
 ### Ending a run

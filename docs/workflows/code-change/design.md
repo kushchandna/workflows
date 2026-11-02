@@ -109,8 +109,10 @@ result = await changer.change(
     every stage passed;
   - `reason: str | None`: why it ended there;
   - `checks: list[CheckRun]`: empty when checks didn't run;
-  - `left_changes: str | None`: the paths the checks left in the work tree
-    (capped at 10, then `and <n> more`), or none;
+  - `left_new: str | None` and `left_modified: str | None`: what the checks
+    left in the work tree, new files and tracked files a check changed (a
+    formatter, a lockfile update), each capped at 10 paths and then
+    `and <n> more`, or none;
   - `review: ReviewOutcome | None`: none when review didn't run.
 - `CheckRun`: `command`, `exit_code: int | None` (none on a timeout),
   `timed_out: bool`, `output: str` (the last `check_output_chars` characters
@@ -302,14 +304,25 @@ reset unless completed or reset_on_failure is off
     killed, the wait for the end of its output is bounded (1 second), so a
     descendant that left the group (`setsid`, `timeout`) can't hold the run.
   - Output streams straight into `checks/<k>.log`; only the last
-    `check_output_chars` characters are kept in memory.
+    `check_output_chars` characters are kept in memory (a bounded tail of at
+    most `4 * check_output_chars + 8` bytes).
+  - If the log can't be written (a full disk), the check is stopped at once
+    and the error raised, instead of leaving the process blocked on a pipe
+    nobody reads.
+  - The pipe is always closed when the check ends, including on cancellation.
+    A descendant that left the group keeps running; that is a known limit.
 - **Files left by the checks.** The commit check left the work tree clean, so
   anything dirty after the checks came from them (reports, coverage,
   caches). The attempt then ends at `CHECKS` with the reason
   `checks left changes in the work tree: <paths>`, joined with `; ` to any
-  failing check's reason, and `left_changes` holds the paths. The retry prompt
-  tells the agent to git-ignore those files (and commit that change) or make
-  the check stop writing them, and not to commit them. This keeps the blame on
+  failing check's reason, and `left_new` and `left_modified` hold the paths.
+  The retry prompt tells the agent, for new files, to git-ignore them (and
+  commit that change) or make the check stop writing them, and to delete the
+  files already written, and not to commit them; for tracked files, which
+  can't be git-ignored, to commit the change if it belongs to the fix
+  (formatting, a lockfile update) and otherwise revert it.
+  A check that moves HEAD or switches branch fails the attempt too, with the
+  reason `checks moved HEAD or switched branch`. This keeps the blame on
   the checks: otherwise the review guard, or the next attempt's commit check,
   would report the agent for files it didn't write.
 - **The review guard.** After a review call, our code confirms that HEAD
@@ -340,23 +353,32 @@ line. The code-reviewer notes list this as a gap there.
     nothing else: no unrelated refactoring, renaming or reformatting;
   - commit all the work, in one or more commits, following the commit
     instructions. Don't amend, rebase, reset, switch branches, push or touch
-    remotes;
+    remotes, except to put the repository back when a later section says so;
   - follow any testing and validation guidance in the instruction;
   - stop with `needs_human` instead of guessing when the change needs a design
     choice, turns out much larger than the instruction suggests, doesn't make
     sense against the code, or isn't needed at all (already fixed, or a false
     positive). Leave the code as it is when stopping;
 - the checks the workflow will run, so the agent can run them before it
-  commits;
+  commits, and that files they write which git doesn't ignore fail the attempt
+  (so the agent git-ignores them rather than committing them);
 - the result file's path and both formats.
 
 From the second attempt on, it also carries:
 
 - that the earlier attempts' commits are in place, and that fixes go in as
-  new commits on top;
+  new commits on top (left out after a commit-check failure, where the
+  restore text below applies and the sentence may no longer be true);
 - the path of the latest `change.diff`, when there is one;
 - what went wrong last time: the commit-check reason, each failing check's
-  command, exit code and kept output, or the review's comments.
+  command, exit code and kept output, what the checks left in the work tree,
+  or the review's comments;
+- after a commit-check failure, the commit HEAD must descend from and the
+  starting branch, with the command to put the repository back
+  (`git checkout -f -B <branch> <commit>`, or `git checkout -f --detach
+  <commit>` when the run started detached) and permission to reset or switch
+  branches for that one purpose. A bare `git reset --hard` would move the
+  branch the agent checked out and leave HEAD attached to it.
 
 Only the previous attempt's failure is included, not every attempt's, so the
 prompt doesn't grow with each attempt.
@@ -369,7 +391,9 @@ prompt doesn't grow with each attempt.
 - the three questions from the requirements, and that it doesn't judge style
   or quality;
 - that it must not change any file in the codebase or run git commands that
-  change the repository;
+  change the repository, and must not run builds, tests or linters or
+  anything else that writes files there: any configured checks have already
+  passed, and a new file would trip the review guard;
 - when each verdict applies: `pass` when all three questions are answered
   well; `changes_needed` when something is missing, extra or untested
   against the guidance, with one comment per problem; `inconclusive` only
@@ -458,8 +482,8 @@ New in this design:
   the call on its own. A missing or invalid review result is retried once,
   then counts as inconclusive.
 - The commit check also requires HEAD to stay on the starting branch.
-- The reset returns to the starting branch, then resets hard and runs
-  `git clean -fd`, keeping git-ignored files.
+- The reset returns to the starting branch (see The reset), keeping
+  git-ignored files.
 - The review guard: a review that changes the codebase makes the run
   `inconclusive`.
 - The change agent is told the checks, so it can run them before committing.

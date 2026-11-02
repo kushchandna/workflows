@@ -17,6 +17,7 @@ Every workflow and every agent implementation is its own installable package.
 | [`workflows-agent`](packages/agents/core/README.md) | `workflows.agent` | The generic agent interface, its request, result and event types, and a fake agent for tests. |
 | [`workflows-agent-claude-code`](packages/agents/claude-code/README.md) | `workflows.agent_claude_code` | An agent that runs the Claude Code CLI. |
 | [`workflows-code-review`](packages/workflows/code-review/README.md) | `workflows.code_review` | Reviews a change and returns a status, comments, thread actions and a coverage report. |
+| [`workflows-code-change`](packages/workflows/code-change/README.md) | `workflows.code_change` | Applies one instruction to a codebase, commits it and returns a status, the commits and a description. |
 
 ```
 packages/
@@ -25,6 +26,7 @@ packages/
     claude-code/   workflows-agent-claude-code
   workflows/
     code-review/   workflows-code-review
+    code-change/   workflows-code-change
 scripts/           checks that run across packages
 tests/             tests that need a real agent (opt-in)
 ```

@@ -102,6 +102,10 @@ class GitRepository:
     def base(self) -> str:
         return self._base
 
+    @property
+    def starting_branch(self) -> str | None:
+        return _short(self._ref) if self._ref is not None else None
+
     def head(self) -> str:
         return _text(self._path, "rev-parse", "HEAD")
 

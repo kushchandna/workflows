@@ -22,6 +22,8 @@ def change(**kw: Any) -> str:
         "max_attempts": 3,
         "previous": None,
         "diff_file": None,
+        "expected_head": "abc123",
+        "starting_branch": "main",
     }
     return change_prompt(**(args | kw))
 
@@ -134,3 +136,50 @@ def test_review_prompt(prompt_info):
     assert "    Add the null check." in p and "/w/attempt-1/change.diff" in p
     assert "abc123 ABC-1 Add check" in p
     assert "body" not in p.split("abc123")[1].splitlines()[0]
+
+
+def test_retry_after_commit_check_says_how_to_put_the_repository_back():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.COMMIT_CHECK,
+        reason="earlier commits were rewritten",
+    )
+    retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
+    assert "descend from commit `abc123`" in retry
+    assert "check out `main` and run `git reset --hard abc123`" in retry
+    assert "the one case where you may reset or switch branches" in retry
+
+
+def test_retry_after_commit_check_when_the_run_started_detached():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.COMMIT_CHECK,
+        reason="checked out other; the run started on a detached HEAD",
+    )
+    retry = change(attempt=2, previous=prev, starting_branch=None).split(
+        "What went wrong last time"
+    )[1]
+    assert "detached HEAD it started on" in retry
+    assert "run `git reset --hard abc123`" in retry and "check out" not in retry
+
+
+def test_only_a_commit_check_failure_allows_a_reset():
+    prev = Attempt(number=1, ended_at=ChangeStage.CHECKS, reason="t exited with 1")
+    assert "git reset --hard" not in change(attempt=2, previous=prev)
+    assert "git reset --hard" not in change()
+
+
+def test_the_rules_allow_the_one_exception():
+    assert "The one\n  exception is putting the repository back" in change()
+
+
+def test_review_prompt_forbids_running_anything_that_writes(prompt_info):
+    p = review_prompt(
+        instruction="x",
+        codebase=Path("/repo"),
+        diff_file=Path("/w/attempt-1/change.diff"),
+        commits=[],
+        result_file=Path("/w/attempt-1/review/call-1/result.json"),
+    )
+    assert "already passed" in p and "do not run builds, tests or linters" in p
+    assert "new file there makes the whole run fail" in p

@@ -417,3 +417,28 @@ async def test_events_and_requests(fake_repo, tmp_path, prompt_info):
     assert req.working_folder == tmp_path / "code"
     assert req.extra_folders == [tmp_path / "work"]
     assert req.timeout_seconds == 1800
+
+
+async def test_commit_check_retry_names_the_last_checked_commit(
+    fake_repo, tmp_path, prompt_info
+):
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 1:
+            fake_repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(fake_repo, tmp_path, agent, max_attempts=3, checks=["exit 1"])
+    assert [a.ended_at for a in r.attempts] == [
+        ChangeStage.CHECKS,
+        ChangeStage.COMMIT_CHECK,
+        ChangeStage.COMMIT_CHECK,
+    ]
+    assert "descend from commit `c1`" in agent.requests[2].prompt
+    assert "check out `main`" in agent.requests[2].prompt

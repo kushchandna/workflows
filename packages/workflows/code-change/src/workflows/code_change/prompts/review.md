@@ -22,8 +22,10 @@ Answer three questions:
 3. Did it follow the instruction's testing and validation guidance?
 
 Do not judge code style or quality; another reviewer does that. Read the diff, and read the
-surrounding code as far as you need. Do not change any file in the codebase, and do not run
-git commands that change the repository.
+surrounding code as far as you need. Judge the testing guidance by reading the diff and the
+tests. Any configured checks have already passed, so do not run builds, tests or linters, or
+anything else that writes files into the codebase: a new file there makes the whole run fail.
+Do not change any file in the codebase, and do not run git commands that change the repository.
 
 ## Your verdict
 

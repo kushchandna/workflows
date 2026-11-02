@@ -29,6 +29,7 @@ class FakeRepository:
     """An in-memory ``Repository``, so the run loop is tested without git."""
 
     base = "base0"
+    starting_branch: str | None = "main"
 
     def __init__(self) -> None:
         self._commits: list[Commit] = []

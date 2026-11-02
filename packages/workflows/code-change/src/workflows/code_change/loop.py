@@ -130,6 +130,8 @@ class _Run:
                 max_attempts=self.input.max_attempts,
                 previous=attempts[-2] if n > 1 else None,
                 diff_file=diff_file,
+                expected_head=last_checked,
+                starting_branch=self.repo.starting_branch,
             )
             await self.call(self.change_agent, ChangeStage.CHANGE, n, 1, prompt)
             report = read_change_report(result_file)

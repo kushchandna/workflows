@@ -45,7 +45,30 @@ def _check_failures(runs: list[CheckRun]) -> str:
     return "\n".join(parts)
 
 
-def _retry_section(previous: Attempt, diff_file: Path | None) -> str:
+def _restore_instructions(expected_head: str, starting_branch: str | None) -> str:
+    if starting_branch is not None:
+        where = f"on branch `{starting_branch}`"
+        restore = (
+            f"check out `{starting_branch}` and run `git reset --hard {expected_head}`"
+        )
+    else:
+        where = "on the detached HEAD it started on, without checking out a branch"
+        restore = f"run `git reset --hard {expected_head}`"
+    return (
+        f"The workflow needs HEAD to be {where} and to descend from commit "
+        f"`{expected_head}`. If the failure is about rewritten commits or leaving the "
+        f"branch, put the repository back first ({restore}; keep a copy of any work you "
+        "still need), then redo the fix as new commits on top. This is the one case where "
+        "you may reset or switch branches."
+    )
+
+
+def _retry_section(
+    previous: Attempt,
+    diff_file: Path | None,
+    expected_head: str,
+    starting_branch: str | None,
+) -> str:
     lines = [
         "## What went wrong last time",
         "",
@@ -64,7 +87,13 @@ def _retry_section(previous: Attempt, diff_file: Path | None) -> str:
             "You did not write a valid result file. Write one as described under Reporting."
         )
     elif previous.ended_at == ChangeStage.COMMIT_CHECK:
-        lines += ["The commit check failed:", "", _indent(reason)]
+        lines += [
+            "The commit check failed:",
+            "",
+            _indent(reason),
+            "",
+            _restore_instructions(expected_head, starting_branch),
+        ]
     elif previous.ended_at == ChangeStage.CHECKS:
         lines += ["These checks failed:", "", _check_failures(previous.checks)]
     elif previous.ended_at == ChangeStage.REVIEW:
@@ -88,6 +117,8 @@ def change_prompt(
     max_attempts: int,
     previous: Attempt | None,
     diff_file: Path | None,
+    expected_head: str,
+    starting_branch: str | None,
 ) -> str:
     return _template("change").substitute(
         result_file=result_file,
@@ -99,7 +130,11 @@ def change_prompt(
         if commit_instructions
         else _NONE,
         checks="\n".join(_indent(_bullet(c)) for c in checks) if checks else _NONE,
-        retry=_retry_section(previous, diff_file) if previous is not None else "",
+        retry=(
+            _retry_section(previous, diff_file, expected_head, starting_branch)
+            if previous is not None
+            else ""
+        ),
     )
 
 

@@ -12,6 +12,11 @@ class Repository(Protocol):
         """The full id of HEAD when the run started."""
         ...
 
+    @property
+    def starting_branch(self) -> str | None:
+        """The branch HEAD was on when the run started, or ``None`` if it was detached."""
+        ...
+
     def head(self) -> str: ...
 
     def commit_problem(self, last_checked: str) -> str | None:

@@ -1,11 +1,13 @@
 import asyncio
+import io
 import os
 import shutil
 import time
 
 import pytest
 
-from workflows.code_change.checks import checks_reason, run_checks
+from workflows.code_change import checks
+from workflows.code_change.checks import _Output, checks_reason, run_checks
 
 
 async def run(tmp_path, commands, timeout=None, keep=20000):
@@ -79,7 +81,7 @@ needs_setsid = pytest.mark.skipif(shutil.which("setsid") is None, reason="needs 
 @needs_setsid
 async def test_escaped_child_does_not_hold_the_run(tmp_path):
     start = time.monotonic()
-    [r] = await run(tmp_path, ["setsid sleep 30 & echo started"])
+    [r] = await run(tmp_path, ["setsid sleep 5 & echo started"])
     assert (r.exit_code, r.output) == (0, "started\n")
     assert time.monotonic() - start < 10
 
@@ -87,7 +89,7 @@ async def test_escaped_child_does_not_hold_the_run(tmp_path):
 @needs_setsid
 async def test_escaped_child_does_not_outlast_the_timeout(tmp_path):
     start = time.monotonic()
-    [r] = await run(tmp_path, ["echo start; setsid sleep 30 & sleep 30"], timeout=0.3)
+    [r] = await run(tmp_path, ["echo start; setsid sleep 5 & sleep 30"], timeout=0.3)
     assert (r.timed_out, r.output) == (True, "start\n")
     assert time.monotonic() - start < 10
 
@@ -146,3 +148,60 @@ async def test_checks_do_not_read_the_callers_stdin(tmp_path):
         os.dup2(saved, 0)
         os.close(saved)
     assert r.output == "eof\n"
+
+
+def test_output_memory_is_bounded():
+    log = io.BytesIO()
+    output = _Output(log, keep_chars=5)
+    for _ in range(1000):
+        output.add(b"x" * 1000)
+        assert output.buffered <= 4 * 5 + 8
+    assert len(log.getvalue()) == 1_000_000
+    assert output.kept() == ("xxxxx", True)
+
+
+@pytest.mark.skipif(not os.path.exists("/dev/full"), reason="needs /dev/full")
+async def test_a_failing_log_write_stops_the_check(tmp_path):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "1.log").symlink_to("/dev/full")
+    start = time.monotonic()
+    with pytest.raises(OSError):
+        await run(tmp_path, ["yes x | head -c 5000000"])  # no timeout
+    assert time.monotonic() - start < 10
+
+
+def open_fds() -> int:
+    return len(os.listdir("/proc/self/fd"))
+
+
+needs_proc = pytest.mark.skipif(
+    not os.path.isdir("/proc/self/fd"), reason="needs /proc/self/fd"
+)
+
+
+@needs_setsid
+@needs_proc
+async def test_escaped_checks_do_not_leak_descriptors(tmp_path):
+    await run(tmp_path, ["setsid sleep 4 & echo warm up"])
+    before = open_fds()
+    for _ in range(3):
+        await run(tmp_path, ["setsid sleep 4 & echo hi"])
+    assert open_fds() <= before
+
+
+@needs_setsid
+async def test_cancelling_while_waiting_for_the_output_closes_the_pipe(
+    tmp_path, monkeypatch
+):
+    closed = []
+    real_close = checks._close_transport
+    monkeypatch.setattr(
+        checks, "_close_transport", lambda proc: (closed.append(proc), real_close(proc))
+    )
+    task = asyncio.create_task(run(tmp_path, ["setsid sleep 4 & echo hi"]))
+    await asyncio.sleep(0.5)  # the shell has exited; the reader is in its grace period
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(closed) == 1

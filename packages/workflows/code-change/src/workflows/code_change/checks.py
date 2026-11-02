@@ -19,13 +19,22 @@ def _kill_group(pid: int) -> None:
         pass
 
 
-async def _wait_for_exit(proc: asyncio.subprocess.Process) -> None:
+async def _wait_for_exit(
+    proc: asyncio.subprocess.Process, reader: asyncio.Task[None] | None = None
+) -> None:
     """Waits for the process itself to exit.
 
     On Python 3.11, ``Process.wait()`` also waits for the process's pipes to close, which
     never happens while a leftover child still holds them.
+
+    If the reader fails (the log can't be written), nothing drains the pipe any more and the
+    process would block on its next write until the timeout, so the failure is raised at once.
     """
     while proc.returncode is None:
+        if reader is not None and reader.done() and not reader.cancelled():
+            error = reader.exception()
+            if error is not None:
+                raise error
         await asyncio.sleep(0.05)
 
 
@@ -47,6 +56,11 @@ class _Output:
         if len(self._tail) > self._limit:
             del self._tail[: len(self._tail) - self._limit]
 
+    @property
+    def buffered(self) -> int:
+        """How many bytes of output are held in memory."""
+        return len(self._tail)
+
     def kept(self) -> tuple[str, bool]:
         """The last ``keep_chars`` characters, and whether anything was cut."""
         text = self._tail.decode("utf-8", errors="replace")
@@ -60,10 +74,8 @@ async def _drain(stream: asyncio.StreamReader, output: _Output) -> None:
         output.add(chunk)
 
 
-async def _finish_reader(
-    proc: asyncio.subprocess.Process, reader: asyncio.Task[None]
-) -> None:
-    """Gives the reader a moment to reach the end of the output, then lets go of the pipe.
+async def _finish_reader(reader: asyncio.Task[None]) -> None:
+    """Gives the reader a moment to reach the end of the output.
 
     A descendant that left the process group (``setsid``, ``timeout``) still holds the pipe
     after the group is killed. Waiting for it would hang the run for as long as it lives.
@@ -72,6 +84,13 @@ async def _finish_reader(
         await asyncio.wait_for(reader, _DRAIN_GRACE_SECONDS)
     except TimeoutError:
         pass
+
+
+def _close_transport(proc: asyncio.subprocess.Process) -> None:
+    """Lets go of the pipe, so an escaped descendant doesn't keep a descriptor open here.
+
+    asyncio has no public way to do this for a subprocess's pipes.
+    """
     transport = getattr(proc, "_transport", None)
     if transport is not None:
         transport.close()
@@ -101,7 +120,7 @@ async def _run_one(
         timed_out = False
         try:
             try:
-                await asyncio.wait_for(_wait_for_exit(proc), timeout_seconds)
+                await asyncio.wait_for(_wait_for_exit(proc, reader), timeout_seconds)
             except TimeoutError:
                 timed_out = True
             finally:
@@ -109,9 +128,10 @@ async def _run_one(
                 _kill_group(proc.pid)
             if timed_out:
                 await _wait_for_exit(proc)
-            await _finish_reader(proc, reader)
+            await _finish_reader(reader)
         finally:
             reader.cancel()
+            _close_transport(proc)
     text, truncated = output.kept()
     return (None if timed_out else proc.returncode), timed_out, text, truncated
 

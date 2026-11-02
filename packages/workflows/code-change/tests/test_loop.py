@@ -442,3 +442,123 @@ async def test_commit_check_retry_names_the_last_checked_commit(
     ]
     assert "descend from commit `c1`" in agent.requests[2].prompt
     assert "check out `main`" in agent.requests[2].prompt
+
+
+async def test_review_guard_compares_with_the_last_checked_commit(
+    fake_repo, tmp_path, prompt_info
+):
+    def review(req):
+        fake_repo.commit("sneaky")
+        write_report(prompt_info.result_file(req.prompt), verdict="pass")
+        return "ok"
+
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        FakeAgent(respond=review),
+        review=True,
+    )
+    assert (r.status, r.reason) == ("inconclusive", "review changed the codebase")
+
+
+async def test_review_guard_runs_after_the_first_call_even_without_a_result(
+    fake_repo, tmp_path, prompt_info
+):
+    def review(req):
+        fake_repo.unchanged_result = False
+        return "ok"
+
+    reviewer = FakeAgent(respond=review)
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        reviewer,
+        review=True,
+    )
+    assert (r.status, r.reason) == ("inconclusive", "review changed the codebase")
+    assert len(reviewer.requests) == 1
+
+
+async def test_review_guard_runs_after_the_retry(fake_repo, tmp_path, prompt_info):
+    def review(req):
+        if len(reviewer.requests) == 2:
+            fake_repo.unchanged_result = False
+            write_report(prompt_info.result_file(req.prompt), verdict="pass")
+        return "ok"
+
+    reviewer = FakeAgent(respond=review)
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        reviewer,
+        review=True,
+    )
+    assert (r.status, r.reason) == ("inconclusive", "review changed the codebase")
+    assert len(reviewer.requests) == 2
+
+
+def titled_agent(fake_repo, prompt_info, last_report=None):
+    """Commits and reports ``done`` with a title that names the attempt."""
+
+    def respond(req):
+        n = prompt_info.attempt(req.prompt)
+        fake_repo.commit(f"fix {n}")
+        report = {"outcome": "done", "title": f"t{n}", "description": f"d{n}"}
+        if last_report is not None and n == 3:
+            report = last_report
+        write_report(prompt_info.result_file(req.prompt), **report)
+        return "ok"
+
+    return FakeAgent(respond=respond)
+
+
+async def test_title_comes_from_the_last_done_result(fake_repo, tmp_path, prompt_info):
+    r = await run(
+        fake_repo,
+        tmp_path,
+        titled_agent(fake_repo, prompt_info),
+        max_attempts=2,
+        checks=["exit 1"],
+    )
+    assert (r.status, r.title, r.description) == ("failed", "t2", "d2")
+
+
+async def test_title_is_kept_when_a_later_attempt_needs_a_human(
+    fake_repo, tmp_path, prompt_info
+):
+    agent = titled_agent(
+        fake_repo,
+        prompt_info,
+        last_report={"outcome": "needs_human", "reason": "Too big."},
+    )
+    r = await run(fake_repo, tmp_path, agent, max_attempts=3, checks=["exit 1"])
+    assert (r.status, r.title, r.description) == ("needs_human", "t2", "d2")
+
+
+async def test_title_is_kept_when_the_review_is_inconclusive(
+    fake_repo, tmp_path, prompt_info
+):
+    def review(req):
+        write_report(
+            prompt_info.result_file(req.prompt),
+            verdict="inconclusive",
+            reason="Unclear.",
+        )
+        return "ok"
+
+    r = await run(
+        fake_repo,
+        tmp_path,
+        titled_agent(fake_repo, prompt_info),
+        FakeAgent(respond=review),
+        review=True,
+    )
+    assert (r.status, r.title, r.description) == ("inconclusive", "t1", "d1")
+
+
+async def test_title_is_empty_when_no_attempt_reported_done(fake_repo, tmp_path):
+    r = await run(fake_repo, tmp_path, FakeAgent(), max_attempts=2)
+    assert (r.status, r.title, r.description) == ("failed", None, None)

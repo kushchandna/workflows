@@ -54,7 +54,7 @@ class FakeRepository:
         return None
 
     def unchanged(self, head: str) -> bool:
-        return self.unchanged_result
+        return self.unchanged_result and head == self.head()
 
     def write_diff(self, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)

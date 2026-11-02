@@ -93,7 +93,7 @@ stage runs.
 |---|---|---|
 | **Change** | Agent | Makes the change and commits it, in one or more commits, following the commit instructions. Reports either a title and description of what changed and why, or that it needs human input and why. |
 | **Commit check** | Code | Confirms that HEAD has moved past the base commit, that the base commit is still an ancestor of HEAD, and that nothing is left uncommitted. |
-| **Checks** | Code | Runs every configured command and records each one's exit code and output. |
+| **Checks** | Code | Runs every configured command, with its input closed, and records each one's exit code and output. The work tree must still be clean afterwards: files a check leaves behind fail the attempt, and the agent is told to git-ignore them. |
 | **Review** | Agent, optional | A spec review: compares the commits since the base with the instruction. |
 
 ### The review
@@ -182,6 +182,9 @@ every agent event, labeled with its stage and try number.
 - An inconclusive review stops the run.
 - The review is a spec review against the instruction, not a code review.
 - Resetting to the base commit when a run doesn't complete can be turned off.
+- Files that checks leave in the work tree fail the attempt at the checks
+  stage, with the agent told to git-ignore them.
+- Checks run with their input closed.
 
 ## Claude's calls (overridable)
 

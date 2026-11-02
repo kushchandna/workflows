@@ -109,6 +109,8 @@ result = await changer.change(
     every stage passed;
   - `reason: str | None`: why it ended there;
   - `checks: list[CheckRun]`: empty when checks didn't run;
+  - `left_changes: str | None`: the paths the checks left in the work tree
+    (capped at 10, then `and <n> more`), or none;
   - `review: ReviewOutcome | None`: none when review didn't run.
 - `CheckRun`: `command`, `exit_code: int | None` (none on a timeout),
   `timed_out: bool`, `output: str` (the last `check_output_chars` characters
@@ -128,7 +130,9 @@ result = await changer.change(
   - the work tree isn't clean: `git status --porcelain --untracked-files=all`
     prints anything. Git-ignored files don't count;
   - the instruction is empty or only whitespace;
-  - `work_folder` isn't empty, or is inside the codebase.
+  - `work_folder` isn't empty, or is inside the codebase;
+  - no `work_folder` is given and the system temporary folder is inside the
+    codebase (the default work folder would be).
 - `AgentError` from any agent call propagates after the reset described
   below.
 - A git command failing in our own code raises `RuntimeError` with git's
@@ -174,7 +178,8 @@ After each change call, our code checks, in this order, and stops at the
 first failure:
 
 1. HEAD is still on the starting ref: the same branch, or still detached when
-   the run started detached.
+   the run started detached. The full ref is compared (`refs/heads/main`), not
+   the short name, which is ambiguous when a tag has the same name.
 2. The **last checked commit** is an ancestor of HEAD
    (`git merge-base --is-ancestor`). That's HEAD after the latest passing
    commit check, or the base when none has passed yet. This catches amended,
@@ -188,12 +193,19 @@ reason.
 
 ### The reset
 
-`reset(base, starting_ref)`:
+`reset(base, starting_ref)`, with repository hooks turned off
+(`-c core.hooksPath=/dev/null`) for the commands that move HEAD:
 
-1. `git checkout -f <branch>` when the agent left the starting branch, or
-   `git checkout -f --detach <base>` when the run started detached.
-2. `git reset --hard <base>`.
-3. `git clean -fd`. Not `-x`, so git-ignored files such as build output and
+1. `git read-tree <base>`. The index goes first. Otherwise a file the agent
+   committed is deleted along with its commit, even a git-ignored one that
+   existed before the run (`.env`). With the index at the base such a file is
+   merely untracked, and the ignore rules restored in the next steps keep it.
+2. `git checkout -f -B <branch> <base>`, which also recreates the branch if
+   the agent renamed or deleted it, or `git checkout -f --detach <base>` when
+   the run started detached.
+3. `git reset --hard <base>`.
+4. `git clean -ffd`. The doubled `f` also removes untracked nested
+   repositories. Not `-x`, so git-ignored files such as build output and
    virtual environments stay.
 
 It runs when the run ends in any status but `completed`, and when anything
@@ -281,12 +293,28 @@ reset unless completed or reset_on_failure is off
 ```
 
 - **Checks** run one at a time, in the given order, each through the shell
-  (`subprocess.run(command, shell=True, cwd=codebase)`) with the environment
-  inherited. Every check runs even after one fails, so the next attempt sees
-  every failure. A check that exits non-zero or times out fails. A command
-  that can't be found fails through the shell's own exit code.
+  (`asyncio` subprocess, `cwd=codebase`) in its own process group, with the
+  environment inherited and **stdin closed**, so a check can't read or hold up
+  the caller's input. Every check runs even after one fails, so the next
+  attempt sees every failure. A check that exits non-zero or times out fails.
+  A command that can't be found fails through the shell's own exit code.
+  - A timeout kills the whole process group. After the process exits or is
+    killed, the wait for the end of its output is bounded (1 second), so a
+    descendant that left the group (`setsid`, `timeout`) can't hold the run.
+  - Output streams straight into `checks/<k>.log`; only the last
+    `check_output_chars` characters are kept in memory.
+- **Files left by the checks.** The commit check left the work tree clean, so
+  anything dirty after the checks came from them (reports, coverage,
+  caches). The attempt then ends at `CHECKS` with the reason
+  `checks left changes in the work tree: <paths>`, joined with `; ` to any
+  failing check's reason, and `left_changes` holds the paths. The retry prompt
+  tells the agent to git-ignore those files (and commit that change) or make
+  the check stop writing them, and not to commit them. This keeps the blame on
+  the checks: otherwise the review guard, or the next attempt's commit check,
+  would report the agent for files it didn't write.
 - **The review guard.** After a review call, our code confirms that HEAD
-  hasn't moved and the work tree is still clean. If the review changed
+  hasn't moved, is still on the starting ref, and the work tree is still
+  clean. If the review changed
   anything, the review is `inconclusive` with the reason
   `review changed the codebase`, and the run stops there.
 - **The `failed` reason** is the last attempt's reason, prefixed with the
@@ -391,6 +419,15 @@ prompt doesn't grow with each attempt.
 - An inconclusive review stops the run.
 - The review is a spec review against the instruction, not a code review.
 - Resetting to the base commit when a run doesn't complete can be turned off.
+- Files that checks leave in the work tree fail the attempt at `CHECKS` (see
+  Running a change), with the agent told to git-ignore them. Chosen over
+  cleaning them up automatically, which would hide output and formatter
+  changes silently.
+- Checks run with stdin closed.
+- The fixes from the independent reviews, listed in `review-findings.md`,
+  including the reset changes above, the bounded output wait, the temporary
+  folder rule, and the retry text that lets the agent restore HEAD after a
+  commit-check failure about rewritten commits or a switched branch.
 
 ## Claude's calls (overridable)
 

@@ -408,14 +408,44 @@ folder deleted.
 - R3-6 = R5-8 (the guard ignores the branch).
 - R4-7, the "Outside this branch" note in R4, and R5-1 are one problem (files left by checks).
 
-## Decisions waiting for the user
+## Decisions
 
-- **D1. Files left behind by checks (R5-1, R4-7).** Proposed rule: after the checks, if the work tree
-  is dirty, the attempt fails at `CHECKS` with a reason like `checks left changes in the work tree:
-  report.xml`; the retry prompt then tells the agent to git-ignore them or change the check, and not
-  to commit them. The review guard is then only about what the reviewer did. This adds a rule to the
-  spec.
-- **D2. stdin for checks (R2-3).** Proposed: close it (`DEVNULL`), departing from the design's
-  literal `subprocess.run`.
-- **D3. How fixes land.** The user chose a 7th branch, `code-change-7-review-fixes`, on top of
-  branch 6 (no history rewrite).
+- **D1. Files left behind by checks (R5-1, R4-7): decided.** The attempt fails at `CHECKS` with
+  `checks left changes in the work tree: <paths>`; the retry prompt tells the agent to git-ignore
+  the files or stop the check writing them, and not to commit them. Chosen over cleaning up
+  automatically.
+- **D2. stdin for checks (R2-3): decided.** Closed (`DEVNULL`).
+- **D3. How fixes land: decided.** A 7th branch, `code-change-7-review-fixes`, on top of branch 6
+  (no history rewrite).
+
+## Status after branch 7
+
+Branch `code-change-7-review-fixes`, one commit per group, in the order of this file.
+
+| Finding | Severity | Commit |
+|---|---|---|
+| R2-1, R6-1 bounded wait for check output | medium | `e64433d` |
+| R2-2 stream output, keep a bounded tail | medium | `e64433d` |
+| R2-3 close stdin for checks | low-medium (D2) | `f535ad4` |
+| R3-1 reset keeps ignored files the agent committed | high | `d34aa4e` |
+| R3-2 hooks off during the reset | medium | `d34aa4e` |
+| R3-3 full refs instead of short branch names | medium | `d34aa4e` |
+| R3-4 `clean -ffd` | medium | `d34aa4e` |
+| R3-5 `checkout -B` after a renamed or deleted branch | medium | `d34aa4e` |
+| R3-6, R5-8 guard also checks the starting ref | medium-low | `d34aa4e` |
+| R3-10 reset test with a commit on the starting branch | low (part) | `d34aa4e` |
+| R4-1 retry text can restore HEAD and branch | medium | `01d5b84` |
+| R4-2 review prompt forbids running tests | medium | `01d5b84` |
+| R5-2 fake `unchanged` compares the commit; guard tests | medium | `a699045` |
+| R5-3 `last_checked` moves forward (test) | medium | `01d5b84`, `a699045` |
+| R5-4 title and description per status (tests) | medium | `a699045` |
+| R6-2 temporary folder inside the codebase | medium | `60d4a73` |
+| R5-1, R4-7 files left by the checks | medium (D1) | `e233086` |
+| README for stdin and the left-changes rule | | `e963ec2` |
+
+Each new test was checked against the old code and fails there: the two escaped-child tests (checks),
+nine of the ten new git tests, five deliberate mutations of `loop.py`, and the stdin and left-changes
+tests.
+
+Not fixed (low severity, deferred): R1-1, R1-2, R2-4 to R2-7, R3-7 to R3-9, the rest of R3-10, R4-3
+to R4-6, R4-8, R4-9, R5-5 to R5-7, R6-3 to R6-5.

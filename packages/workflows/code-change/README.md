@@ -60,7 +60,9 @@ if result.status == "completed":
 | `work_folder` | none | Keeps the run's files after it ends. Must be empty or missing and outside the codebase. |
 
 `ChangeInputError` is raised before any agent runs for invalid input: a blank instruction, a codebase
-that isn't the top of a git work tree or has no commits or isn't clean, or a bad `work_folder`.
+that isn't the top of a git work tree or has no commits or isn't clean, a bad `work_folder`, or no
+`work_folder` while the system temporary folder (`TMPDIR`) is inside the codebase. A git failure in
+the workflow's own code raises `RuntimeError`.
 
 ## Output
 
@@ -80,7 +82,8 @@ that isn't the top of a git work tree or has no commits or isn't clean, or a bad
 - **`title`**, **`description`**: the agent's account of what changed and why, from the last
   attempt that reported `done`. Kept on other statuses as a record.
 - **`attempts`**: for each attempt, the stage it ended at and why, each check's command, exit code
-  and output, what the checks left in the work tree (`left_changes`), and the review's verdict and
+  and output, what the checks left in the work tree (`left_new` for new files, `left_modified` for tracked files
+  a check changed), and the review's verdict and
   comments.
 
 Failures such as an agent crash raise `AgentError` and are never reported as a status.
@@ -98,22 +101,30 @@ Each attempt runs these stages in order; a stage that fails ends the attempt.
 3. **Checks** (code). Every check runs, even after one fails, so the next attempt sees every failure.
    Checks run with their input closed, and each check's full output is kept in the work folder.
    The commit check left the work tree clean, so anything dirty after the checks came from them
-   (reports, coverage, caches). That fails the attempt at `checks`, with the reason `checks left
-   changes in the work tree: <paths>`, and the agent is told to git-ignore those files or stop the
-   check writing them. Without this rule the files would be blamed on the review or on the next
-   commit check.
+   (reports, coverage, caches, a formatter's rewrite). That fails the attempt at `checks`, with the
+   reason `checks left changes in the work tree: <paths>`. For new files the agent is told to
+   git-ignore them or stop the check writing them; for tracked files, to commit the change if it
+   belongs to the fix and revert it otherwise. A check that moves HEAD or switches branch fails the
+   attempt too. Without these rules the changes would be blamed on the review or on the next commit
+   check.
 4. **Review** (agent, optional). A spec review: does the change do everything the instruction asks,
    does it do anything it didn't ask for, and did it follow the testing guidance? It doesn't judge
    style or quality; run `workflows-code-review` on the commits for that. A result that is missing or
-   invalid is retried once.
+   invalid is retried once. After each review call the workflow checks that HEAD, the branch and
+   the work tree are unchanged.
 
 When the commit check fails, a check fails, or the review asks for changes, and attempts remain, the
 agent gets what went wrong and fixes it with **new commits on top**. Commits from all attempts
-together form the change.
+together form the change. The one exception is a commit check that failed because commits were
+rewritten or the agent left the starting branch: the agent is then told which commit HEAD must
+descend from and how to put the repository back (`git checkout -f -B <branch> <commit>`, or
+`git checkout -f --detach <commit>` when the run started detached), and may reset for that.
 
 When a run ends in any status but `completed` (or raises after the first agent call), the workflow
-resets the work tree: back on the starting branch at the base commit, with untracked files removed.
-Git-ignored files stay. Commits the agent made on other branches are not removed.
+resets the work tree: back on the starting branch at the base commit, with untracked files removed
+(including nested repositories) and the repository's hooks turned off. Git-ignored files stay,
+including ones the agent committed or force-added. Commits the agent made on other branches are not
+removed, and neither are a stash or an unfinished rebase.
 
 ## What it doesn't do
 
@@ -122,4 +133,7 @@ Git-ignored files stay. Commits the agent made on other branches are not removed
   agent is told not to change anything, and the workflow checks that HEAD and the work tree are
   unchanged after a review, but it can't stop writes elsewhere. Run it on a throwaway checkout if
   that matters.
+- Stop a check's descendants that left its process group (`setsid`, coreutils `timeout`). After the
+  check's group is killed the workflow waits a second for its output, then lets go of the pipe; such
+  a process keeps running and may still write into the work tree later.
 - Handle submodules, or two runs on the same work tree at once.

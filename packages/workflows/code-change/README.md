@@ -80,7 +80,8 @@ that isn't the top of a git work tree or has no commits or isn't clean, or a bad
 - **`title`**, **`description`**: the agent's account of what changed and why, from the last
   attempt that reported `done`. Kept on other statuses as a record.
 - **`attempts`**: for each attempt, the stage it ended at and why, each check's command, exit code
-  and output, and the review's verdict and comments.
+  and output, what the checks left in the work tree (`left_changes`), and the review's verdict and
+  comments.
 
 Failures such as an agent crash raise `AgentError` and are never reported as a status.
 
@@ -95,6 +96,12 @@ Each attempt runs these stages in order; a stage that fails ends the attempt.
    ancestor of HEAD (nothing was amended or rebased), there is at least one new commit, and nothing
    is left uncommitted.
 3. **Checks** (code). Every check runs, even after one fails, so the next attempt sees every failure.
+   Checks run with their input closed, and each check's full output is kept in the work folder.
+   The commit check left the work tree clean, so anything dirty after the checks came from them
+   (reports, coverage, caches). That fails the attempt at `checks`, with the reason `checks left
+   changes in the work tree: <paths>`, and the agent is told to git-ignore those files or stop the
+   check writing them. Without this rule the files would be blamed on the review or on the next
+   commit check.
 4. **Review** (agent, optional). A spec review: does the change do everything the instruction asks,
    does it do anything it didn't ask for, and did it follow the testing guidance? It doesn't judge
    style or quality; run `workflows-code-review` on the commits for that. A result that is missing or

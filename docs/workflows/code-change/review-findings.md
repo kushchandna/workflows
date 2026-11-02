@@ -420,7 +420,8 @@ folder deleted.
 
 ## Status after branch 7
 
-Branch `code-change-7-review-fixes`, one commit per group, in the order of this file.
+Branch `code-change-7-review-fixes`, first round: 8 commits, one per group, in the order of this file
+(an earlier note said 12, which was wrong). The second round, below, adds 3 more.
 
 | Finding | Severity | Commit |
 |---|---|---|
@@ -449,3 +450,32 @@ tests.
 
 Not fixed (low severity, deferred): R1-1, R1-2, R2-4 to R2-7, R3-7 to R3-9, the rest of R3-10, R4-3
 to R4-6, R4-8, R4-9, R5-5 to R5-7, R6-3 to R6-5.
+
+## Second round: reviews of branch 7
+
+Two Opus reviewers looked at the first-round fixes: an overall review of the new code, and an audit
+of whether each finding was fixed (the old and new code were run on the original scenarios, and the
+loop tests were mutation-tested). The audit found 14 of 18 rows FIXED and 4 PARTIAL (R2-2, R4-1,
+R5-1, R4-7), with nothing NOT FIXED and no deferred finding made worse. Where both reviewers found
+the same thing it is one item here.
+
+| # | Finding | Severity | Resolution | Commit |
+|---|---|---|---|---|
+| S1 | The restore advice for a run that started detached was `git reset --hard`, which moves the branch the agent checked out and leaves HEAD attached to it, so every remaining attempt failed the commit check again. The same text failed when the agent renamed the starting branch. The test locked in the wrong command. | medium | Fixed: `git checkout -f --detach <commit>` for a detached start, `git checkout -f -B <branch> <commit>` for a branch start. Tests updated. | `f6a3b2b` |
+| S2 | A failing log write (full disk) left the process blocked on a pipe nobody read; the run waited for the whole check timeout, or forever with none. A regression from streaming the output. | medium | Fixed: the wait for the process raises the reader's error at once; the group is killed. Test with `/dev/full`. | `d20c01f` |
+| S3 | The retry told the agent to git-ignore and not commit files a check changed, even tracked ones (a formatter, a lockfile), which can't be git-ignored. | medium | Fixed: `Attempt.left_changes` is replaced by `left_new` and `left_modified`; tracked files get "commit it if it belongs to the fix, otherwise revert it". | `f6a3b2b` |
+| S4 | The memory bound had no test; keeping all the output in memory passed every test. | medium | Fixed: `_Output.buffered` and a test; checked by mutation. | `d20c01f` |
+| S5 | Every retry said "do not amend or rewrite", which contradicts the restore text and is false after "earlier commits were rewritten". | low-medium | Fixed: the sentence is left out after a commit-check failure. | `f6a3b2b` |
+| S6 | The left-changes advice didn't say to delete the files already written, so an agent that made the check stop writing them still failed the next commit check. | low-medium | Fixed in the retry text. | `f6a3b2b` |
+| S7 | A check that commits or moves HEAD was still blamed on the review. | low-medium | Fixed: after the checks, `unchanged()` also decides; reason `checks moved HEAD or switched branch`. | `f6a3b2b` |
+| S8 | A check's descendants that left its process group (`setsid`, coreutils `timeout`) keep running after the check returns and can write into the work tree later. The tests also left `setsid sleep 30` processes behind. | low-medium | Documented as a known limit (README, design). Not fixed: it needs a subreaper or a cgroup, which is platform-specific. The tests now use `sleep 5`. | `6c0cd73`, docs |
+| S9 | The subprocess pipe wasn't closed when the run was cancelled during the 1 s wait; nothing tested the close. | low | Fixed: closed in the outer `finally`. Tests (normal path, and cancellation) checked by mutation. | `d20c01f` |
+| S10 | Docs out of date: the README error list, the review guard and the restore exception; design.md (`git clean -fd`, the change and review prompts); requirements.md (Tries). | low | Fixed. | `6c0cd73`, design docs |
+| S11 | The temporary-folder test used a folder that wasn't a git repository and had no symlink case. | low | Fixed: real-git tests, with a symlinked `TMPDIR` and a harmless one. | `6c0cd73` |
+| S12 | `reset --hard` after `checkout -f -B` is redundant. | low | Kept on purpose, as a second step that costs nothing. | none |
+| S13 | The findings record said 12 commits (it was 8), and R2-4's test gaps were closed along the way but still listed as deferred. | low | Corrected here: R2-4 is closed (non-ASCII truncation, output kept before a timeout, exact fit, cancellation are tested). | this file |
+
+Checked and fine in the second round: the reset in about 25 unusual states (merge in progress, a
+deleted index, symlinks, file/directory swaps, sparse checkout, autocrlf, assume-unchanged and
+skip-worktree flags, submodules), `_Output` edge cases, the dirty test only running when checks are
+configured, and the commit hygiene.

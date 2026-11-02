@@ -21,7 +21,7 @@ class Dirty:
     """The uncommitted and untracked paths in the work tree. Git-ignored files don't count."""
 
     paths: list[str] = field(default_factory=list)  # all of them, in git's order
-    untracked: list[str] = field(default_factory=list)  # the ones that are new files
+    untracked: list[str] = field(default_factory=list)  # new files, staged or not
 
     @property
     def tracked(self) -> list[str]:

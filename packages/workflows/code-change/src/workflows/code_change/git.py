@@ -72,7 +72,8 @@ def _dirty(cwd: Path) -> Dirty:
     while i < len(tokens):
         status, path = tokens[i][:2], tokens[i][3:]
         paths.append(path)
-        if status == "??":
+        # A staged or intent-to-add file ("A") is as new to the repository as an untracked one.
+        if status == "??" or "A" in status:
             untracked.append(path)
         i += 2 if "R" in status or "C" in status else 1  # skip the original path
     return Dirty(paths=paths, untracked=untracked)

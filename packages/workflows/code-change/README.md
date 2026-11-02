@@ -62,7 +62,8 @@ if result.status == "completed":
 `ChangeInputError` is raised before any agent runs for invalid input: a blank instruction, a codebase
 that isn't the top of a git work tree or has no commits or isn't clean, a bad `work_folder`, or no
 `work_folder` while the system temporary folder (`TMPDIR`) is inside the codebase. A git failure in
-the workflow's own code raises `RuntimeError`.
+the workflow's own code raises `RuntimeError`, and a check's log that can't be written (a full disk)
+raises `OSError`; both reset the work tree first unless `reset_on_failure` is off.
 
 ## Output
 
@@ -82,7 +83,7 @@ the workflow's own code raises `RuntimeError`.
 - **`title`**, **`description`**: the agent's account of what changed and why, from the last
   attempt that reported `done`. Kept on other statuses as a record.
 - **`attempts`**: for each attempt, the stage it ended at and why, each check's command, exit code
-  and output, what the checks left in the work tree (`left_new` for new files, `left_modified` for tracked files
+  and output, what the checks left in the work tree (`left_new` for new files, staged or not, `left_modified` for tracked files
   a check changed), and the review's verdict and
   comments.
 
@@ -104,9 +105,10 @@ Each attempt runs these stages in order; a stage that fails ends the attempt.
    (reports, coverage, caches, a formatter's rewrite). That fails the attempt at `checks`, with the
    reason `checks left changes in the work tree: <paths>`. For new files the agent is told to
    git-ignore them or stop the check writing them; for tracked files, to commit the change if it
-   belongs to the fix and revert it otherwise. A check that moves HEAD or switches branch fails the
-   attempt too. Without these rules the changes would be blamed on the review or on the next commit
-   check.
+   belongs to the fix and revert it otherwise. A check that moves HEAD or switches branch
+   (`moved_head`) fails the attempt too; a commit the check made is not the agent's work, so the
+   next attempt must add one beyond it, and the agent is told how to put the repository back.
+   Without these rules the changes would be blamed on the review or on the next commit check.
 4. **Review** (agent, optional). A spec review: does the change do everything the instruction asks,
    does it do anything it didn't ask for, and did it follow the testing guidance? It doesn't judge
    style or quality; run `workflows-code-review` on the commits for that. A result that is missing or

@@ -193,15 +193,15 @@ def test_retry_after_checks_that_changed_tracked_files():
     assert "Git-ignore such files" not in retry
 
 
-def test_retry_after_checks_that_moved_head_shows_the_reason():
+def test_retry_after_checks_with_nothing_else_to_show_gives_the_reason():
     prev = Attempt(
         number=1,
         ended_at=ChangeStage.CHECKS,
-        reason="checks moved HEAD or switched branch",
+        reason="something unexpected",
         checks=[CheckRun(command="true", exit_code=0, output="")],
     )
     retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
-    assert "    checks moved HEAD or switched branch" in retry
+    assert "    something unexpected" in retry
 
 
 def test_only_a_commit_check_failure_allows_a_reset():
@@ -253,6 +253,60 @@ def test_retry_after_failing_checks_that_also_left_files():
     assert "These checks failed" in retry and "    report.xml" in retry
 
 
-def test_the_first_prompt_warns_about_files_checks_write():
+def test_the_first_prompt_tells_new_files_from_tracked_ones():
     p = change()
-    assert "do not commit those files, git-ignore them" in p
+    assert "If a check writes new files that git does not ignore" in p
+    assert "do not commit\n  them; git-ignore them" in p
+    assert "If a check changes tracked files (a formatter, a lockfile update)" in p
+    assert "commit the change when it\n  belongs to the fix" in p
+
+
+def test_restore_command_quotes_the_branch_name():
+    prev = Attempt(number=1, ended_at=ChangeStage.COMMIT_CHECK, reason="x")
+    retry = change(attempt=2, previous=prev, starting_branch="fix&co").split(
+        "What went wrong last time"
+    )[1]
+    assert "git checkout -f -B 'fix&co' abc123" in retry
+
+
+def test_restore_text_mentions_untracked_files():
+    prev = Attempt(number=1, ended_at=ChangeStage.COMMIT_CHECK, reason="x")
+    retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
+    assert "remove untracked files" in retry
+
+
+def test_retry_after_checks_that_moved_head_says_how_to_put_it_back():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.CHECKS,
+        reason="checks moved HEAD or switched branch",
+        checks=[CheckRun(command="true", exit_code=0, output="")],
+        moved_head=True,
+    )
+    retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
+    assert "The checks moved HEAD or switched branch." in retry
+    assert "git checkout -f -B main abc123" in retry
+    assert "still in place" not in retry and "The checks failed" not in retry
+
+
+def test_retry_after_failing_checks_that_also_moved_head():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.CHECKS,
+        reason="x",
+        checks=[CheckRun(command="pytest", exit_code=1, output="FAILED")],
+        moved_head=True,
+    )
+    retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
+    assert "These checks failed" in retry and "The checks moved HEAD" in retry
+
+
+def test_retry_text_says_to_unstage_staged_files():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.CHECKS,
+        reason="x",
+        checks=[CheckRun(command="gen", exit_code=0, output="")],
+        left_new="gen.py",
+    )
+    assert "unstage them first" in change(attempt=2, previous=prev)

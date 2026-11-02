@@ -65,6 +65,8 @@ class Attempt(BaseModel):
     # and tracked files the checks changed (a formatter, a lockfile update).
     left_new: str | None = None
     left_modified: str | None = None
+    # The checks moved HEAD or switched branch.
+    moved_head: bool = False
     review: ReviewOutcome | None = None
 
 

@@ -708,3 +708,66 @@ async def test_a_check_that_moves_head_is_blamed_on_the_checks(
         "checks: checks moved HEAD or switched branch",
     )
     assert reviewer.requests == []
+
+
+async def test_a_failing_check_that_also_moves_head_reports_both(
+    fake_repo, tmp_path, prompt_info
+):
+    class Moving(type(fake_repo)):
+        def unchanged(self, head):
+            return False
+
+    repo = Moving()
+    r = await run(
+        repo,
+        tmp_path,
+        committing_agent(repo, prompt_info),
+        max_attempts=1,
+        checks=["exit 1"],
+    )
+    assert (
+        r.reason == "checks: exit 1 exited with 1; checks moved HEAD or switched branch"
+    )
+    assert r.attempts[0].moved_head is True
+
+
+async def test_a_commit_made_by_a_check_is_not_the_agents_work(
+    fake_repo, tmp_path, prompt_info
+):
+    flag = tmp_path / "code" / "committed.flag"
+
+    class CommittingChecks(type(fake_repo)):
+        committed = False
+
+        def dirty_paths(self):
+            if flag.exists() and not self.committed:
+                self.committed = True
+                self.commit("made by the check")
+            return super().dirty_paths()
+
+    repo = CommittingChecks()
+
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 1:
+            repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(
+        repo, tmp_path, agent, max_attempts=2, checks=["touch committed.flag"]
+    )
+    assert r.attempts[0].moved_head is True
+    assert [a.ended_at for a in r.attempts] == [
+        ChangeStage.CHECKS,
+        ChangeStage.COMMIT_CHECK,
+    ]
+    assert (r.status, r.reason) == ("failed", "commit-check: no new commit")
+    retry = agent.requests[1].prompt.split("What went wrong last time")[1]
+    assert "The checks moved HEAD or switched branch." in retry
+    assert "git checkout -f -B main c1" in retry

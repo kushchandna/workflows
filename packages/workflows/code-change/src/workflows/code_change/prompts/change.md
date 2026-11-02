@@ -32,8 +32,13 @@ $commit_instructions
 ## Checks
 
 When you are done, the workflow runs these commands from $codebase. Each must exit with 0.
-Run them yourself before you commit. If a check writes files that git does not ignore (reports,
-coverage, caches), the attempt fails: do not commit those files, git-ignore them.
+Run them yourself before you commit. The work tree must be clean afterwards, or the attempt
+fails:
+
+- If a check writes new files that git does not ignore (reports, coverage, caches), do not commit
+  them; git-ignore them.
+- If a check changes tracked files (a formatter, a lockfile update), commit the change when it
+  belongs to the fix. Otherwise make sure the check leaves those files alone.
 
 $checks
 

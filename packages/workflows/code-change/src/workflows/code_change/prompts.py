@@ -5,6 +5,7 @@ for a change, ``Attempt:``. Text from the end product and output from checks is 
 line inside it can never look like a fixed line.
 """
 
+import shlex
 from importlib.resources import files
 from pathlib import Path
 from string import Template
@@ -48,16 +49,19 @@ def _check_failures(runs: list[CheckRun]) -> str:
 def _restore_instructions(expected_head: str, starting_branch: str | None) -> str:
     if starting_branch is not None:
         where = f"on branch `{starting_branch}`"
-        restore = f"run `git checkout -f -B {starting_branch} {expected_head}`"
+        restore = (
+            f"run `git checkout -f -B {shlex.quote(starting_branch)} {expected_head}`"
+        )
     else:
         where = "on the detached HEAD it started on, without checking out a branch"
         restore = f"run `git checkout -f --detach {expected_head}`"
     return (
         f"The workflow needs HEAD to be {where} and to descend from commit "
-        f"`{expected_head}`. If the failure is about rewritten commits or leaving the "
-        f"branch, put the repository back first ({restore}; keep a copy of any work you "
-        "still need), then redo the fix as new commits on top. This is the one case where "
-        "you may reset or switch branches."
+        f"`{expected_head}`. If HEAD has moved off that history or the branch has changed, "
+        f"put the repository back first ({restore}; keep a copy of any work you still "
+        "need, and remove untracked files, which the checkout leaves in place), then redo "
+        "the fix as new commits on top. This is the one case where you may reset or "
+        "switch branches."
     )
 
 
@@ -67,7 +71,7 @@ def _retry_section(
     expected_head: str,
     starting_branch: str | None,
 ) -> str:
-    if previous.ended_at == ChangeStage.COMMIT_CHECK:
+    if previous.ended_at == ChangeStage.COMMIT_CHECK or previous.moved_head:
         # The restore text below says what to do; "new commits on top" may no longer be true.
         opening = f"Attempt {previous.number} did not pass."
     else:
@@ -106,7 +110,8 @@ def _retry_section(
                 (
                     "The work tree must be clean after the checks. Git-ignore such files "
                     "(and commit that change) or make the check stop writing them, and "
-                    "delete the files already written. Do not commit them."
+                    "delete the files already written (unstage them first if they are "
+                    "staged). Do not commit them."
                 ),
                 "",
             ]
@@ -123,7 +128,13 @@ def _retry_section(
                 ),
                 "",
             ]
-        if (
+        if previous.moved_head:
+            lines += [
+                "The checks moved HEAD or switched branch.",
+                "",
+                _restore_instructions(expected_head, starting_branch),
+            ]
+        elif (
             not failures
             and previous.left_new is None
             and previous.left_modified is None

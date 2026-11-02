@@ -22,7 +22,7 @@ from workflows.code_change.models import (
     ReviewOutcome,
 )
 from workflows.code_change.prompts import change_prompt, review_prompt
-from workflows.code_change.repo import Repository
+from workflows.code_change.repo import Repository, summarize
 
 Status = Literal["completed", "needs_human", "inconclusive", "failed"]
 
@@ -31,6 +31,7 @@ REVIEW_ASKED_FOR_CHANGES = "review asked for changes"
 NO_REVIEW_RESULT = "no valid review result after retry"
 REVIEW_CHANGED_CODEBASE = "review changed the codebase"
 CHECKS_LEFT_CHANGES = "checks left changes in the work tree"
+CHECKS_MOVED_HEAD = "checks moved HEAD or switched branch"
 
 
 @dataclass
@@ -164,10 +165,14 @@ class _Run:
                 )
                 # The commit check left the tree clean, so whatever is dirty now came from the
                 # checks. Blaming it on the review, or on the next commit check, would be wrong.
-                attempt.left_changes = self.repo.dirty_summary()
+                dirty = self.repo.dirty_paths()
+                attempt.left_new = summarize(dirty.untracked)
+                attempt.left_modified = summarize(dirty.tracked)
                 reasons = [checks_reason(attempt.checks)]
-                if attempt.left_changes is not None:
-                    reasons.append(f"{CHECKS_LEFT_CHANGES}: {attempt.left_changes}")
+                if dirty.paths:
+                    reasons.append(f"{CHECKS_LEFT_CHANGES}: {dirty.summary()}")
+                elif not self.repo.unchanged(last_checked):
+                    reasons.append(CHECKS_MOVED_HEAD)
                 failed = "; ".join(r for r in reasons if r is not None)
                 if failed:
                     attempt.ended_at, attempt.reason = ChangeStage.CHECKS, failed

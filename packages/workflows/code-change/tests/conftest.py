@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from workflows.code_change import Commit
+from workflows.code_change.repo import Dirty
 
 
 class PromptInfo:
@@ -33,9 +34,12 @@ class FakeRepository:
 
     def __init__(self) -> None:
         self._commits: list[Commit] = []
-        self.dirty: list[str] = []
+        self.dirty: list[str] = []  # untracked files
+        self.dirty_tracked: list[str] = []  # tracked files with changes
         # Paths that count as dirty while the file exists, to stand in for what a check wrote.
         self.dirty_when_exists: list[Path] = []
+        # The same for tracked files that a check modified.
+        self.tracked_when_exists: list[Path] = []
         self.unchanged_result = True
         self.reset_calls = 0
         self.reset_error: Exception | None = None
@@ -48,21 +52,24 @@ class FakeRepository:
         self._commits.append(commit)
         return commit.id
 
-    def dirty_summary(self) -> str | None:
-        paths = self.dirty + [p.name for p in self.dirty_when_exists if p.exists()]
-        return ", ".join(paths) if paths else None
+    def dirty_paths(self) -> Dirty:
+        untracked = self.dirty + [p.name for p in self.dirty_when_exists if p.exists()]
+        tracked = self.dirty_tracked + [
+            p.name for p in self.tracked_when_exists if p.exists()
+        ]
+        return Dirty(paths=tracked + untracked, untracked=untracked)
 
     def commit_problem(self, last_checked: str) -> str | None:
         if self.head() == last_checked:
             return "no new commit"
-        dirty = self.dirty_summary()
+        dirty = self.dirty_paths().summary()
         return f"work left uncommitted: {dirty}" if dirty else None
 
     def unchanged(self, head: str) -> bool:
         return (
             self.unchanged_result
             and head == self.head()
-            and self.dirty_summary() is None
+            and not self.dirty_paths().paths
         )
 
     def write_diff(self, dest: Path) -> None:
@@ -78,6 +85,7 @@ class FakeRepository:
             raise self.reset_error
         self._commits.clear()
         self.dirty.clear()
+        self.dirty_tracked.clear()
 
 
 @pytest.fixture

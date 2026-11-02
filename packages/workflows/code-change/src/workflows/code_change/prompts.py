@@ -48,12 +48,10 @@ def _check_failures(runs: list[CheckRun]) -> str:
 def _restore_instructions(expected_head: str, starting_branch: str | None) -> str:
     if starting_branch is not None:
         where = f"on branch `{starting_branch}`"
-        restore = (
-            f"check out `{starting_branch}` and run `git reset --hard {expected_head}`"
-        )
+        restore = f"run `git checkout -f -B {starting_branch} {expected_head}`"
     else:
         where = "on the detached HEAD it started on, without checking out a branch"
-        restore = f"run `git reset --hard {expected_head}`"
+        restore = f"run `git checkout -f --detach {expected_head}`"
     return (
         f"The workflow needs HEAD to be {where} and to descend from commit "
         f"`{expected_head}`. If the failure is about rewritten commits or leaving the "
@@ -69,15 +67,16 @@ def _retry_section(
     expected_head: str,
     starting_branch: str | None,
 ) -> str:
-    lines = [
-        "## What went wrong last time",
-        "",
-        (
+    if previous.ended_at == ChangeStage.COMMIT_CHECK:
+        # The restore text below says what to do; "new commits on top" may no longer be true.
+        opening = f"Attempt {previous.number} did not pass."
+    else:
+        opening = (
             f"Attempt {previous.number} did not pass. Your earlier commits are still in "
             "place. Fix the problem with new commits on top of them; do not amend or "
             "rewrite them."
-        ),
-    ]
+        )
+    lines = ["## What went wrong last time", "", opening]
     if diff_file is not None:
         lines.append(f"Everything changed so far is in: {diff_file}")
     lines.append("")
@@ -98,18 +97,38 @@ def _retry_section(
         failures = _check_failures(previous.checks)
         if failures:
             lines += ["These checks failed:", "", failures, ""]
-        if previous.left_changes is not None:
+        if previous.left_new is not None:
             lines += [
-                "The checks left these files in the work tree:",
+                "The checks left these new files in the work tree:",
                 "",
-                _indent(previous.left_changes),
+                _indent(previous.left_new),
                 "",
                 (
                     "The work tree must be clean after the checks. Git-ignore such files "
-                    "(and commit that change) or make the check stop writing them. Do not "
-                    "commit them."
+                    "(and commit that change) or make the check stop writing them, and "
+                    "delete the files already written. Do not commit them."
                 ),
+                "",
             ]
+        if previous.left_modified is not None:
+            lines += [
+                "The checks changed these tracked files:",
+                "",
+                _indent(previous.left_modified),
+                "",
+                (
+                    "A tracked file can't be git-ignored. If the change belongs to the fix "
+                    "(formatting, a lockfile update), commit it. Otherwise revert it and "
+                    "change the code so that the check leaves the file alone."
+                ),
+                "",
+            ]
+        if (
+            not failures
+            and previous.left_new is None
+            and previous.left_modified is None
+        ):
+            lines += ["The checks failed:", "", _indent(previous.reason or "")]
     elif previous.ended_at == ChangeStage.REVIEW:
         comments = previous.review.comments if previous.review else []
         lines += [

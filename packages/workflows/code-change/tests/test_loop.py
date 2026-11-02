@@ -441,7 +441,7 @@ async def test_commit_check_retry_names_the_last_checked_commit(
         ChangeStage.COMMIT_CHECK,
     ]
     assert "descend from commit `c1`" in agent.requests[2].prompt
-    assert "check out `main`" in agent.requests[2].prompt
+    assert "git checkout -f -B main c1" in agent.requests[2].prompt
 
 
 async def test_review_guard_compares_with_the_last_checked_commit(
@@ -583,7 +583,11 @@ async def test_checks_that_leave_files_fail_the_attempt_not_the_review(
         "checks: checks left changes in the work tree: report.xml",
     )
     a = r.attempts[0]
-    assert (a.ended_at, a.left_changes) == (ChangeStage.CHECKS, "report.xml")
+    assert (a.ended_at, a.left_new, a.left_modified) == (
+        ChangeStage.CHECKS,
+        "report.xml",
+        None,
+    )
     assert a.checks[0].exit_code == 0 and reviewer.requests == []
 
 
@@ -638,8 +642,8 @@ async def test_the_next_attempt_is_told_what_the_checks_left(
     assert r.status == "completed"
     retry = agent.requests[1].prompt.split("What went wrong last time")[1]
     assert "report.xml" in retry and "Git-ignore such files" in retry
-    assert r.attempts[0].left_changes == "report.xml"
-    assert r.attempts[1].left_changes is None
+    assert r.attempts[0].left_new == "report.xml"
+    assert r.attempts[1].left_new is None
 
 
 async def test_nothing_left_means_no_left_changes(fake_repo, tmp_path, prompt_info):
@@ -649,4 +653,58 @@ async def test_nothing_left_means_no_left_changes(fake_repo, tmp_path, prompt_in
         committing_agent(fake_repo, prompt_info),
         checks=["true"],
     )
-    assert r.status == "completed" and r.attempts[0].left_changes is None
+    assert r.status == "completed"
+    assert (r.attempts[0].left_new, r.attempts[0].left_modified) == (None, None)
+
+
+async def test_checks_that_change_tracked_files_are_told_apart(
+    fake_repo, tmp_path, prompt_info
+):
+    fake_repo.tracked_when_exists = [tmp_path / "code" / "a.py"]
+
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 2:
+            fake_repo.tracked_when_exists.clear()  # the agent committed the change
+        fake_repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(fake_repo, tmp_path, agent, checks=["touch a.py"])
+    a = r.attempts[0]
+    assert (a.left_new, a.left_modified) == (None, "a.py")
+    assert a.reason == "checks left changes in the work tree: a.py"
+    retry = agent.requests[1].prompt.split("What went wrong last time")[1]
+    assert "tracked files" in retry and "commit it" in retry
+    assert "Git-ignore" not in retry
+    assert r.status == "completed"
+
+
+async def test_a_check_that_moves_head_is_blamed_on_the_checks(
+    fake_repo, tmp_path, prompt_info
+):
+    class MovingRepo(type(fake_repo)):
+        def unchanged(self, head):
+            return False
+
+    repo = MovingRepo()
+    reviewer = FakeAgent()
+    r = await run(
+        repo,
+        tmp_path,
+        committing_agent(repo, prompt_info),
+        reviewer,
+        review=True,
+        max_attempts=1,
+        checks=["true"],
+    )
+    assert (r.status, r.reason) == (
+        "failed",
+        "checks: checks moved HEAD or switched branch",
+    )
+    assert reviewer.requests == []

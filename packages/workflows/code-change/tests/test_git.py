@@ -333,13 +333,21 @@ def test_unchanged_requires_the_starting_branch(repo):
     assert not r.unchanged(head)
 
 
-def test_dirty_summary(repo):
+def test_dirty_paths_tell_new_files_from_tracked_ones(repo):
     r = open_repository(repo)
-    assert r.dirty_summary() is None
+    assert not r.dirty_paths().paths
     (repo / "report.xml").write_text("x")
     (repo / "ignored.txt").write_text("x")
-    assert r.dirty_summary() == "report.xml"
-    for i in range(11):
+    (repo / "a.py").write_text("changed\n")
+    dirty = r.dirty_paths()
+    assert dirty.paths == ["a.py", "report.xml"]
+    assert (dirty.untracked, dirty.tracked) == (["report.xml"], ["a.py"])
+    assert dirty.summary() == "a.py, report.xml"
+
+
+def test_dirty_paths_summary_is_capped(repo):
+    r = open_repository(repo)
+    for i in range(12):
         (repo / f"f{i:02}.py").write_text("x")
-    summary = r.dirty_summary()
+    summary = r.dirty_paths().summary()
     assert summary is not None and summary.endswith(" and 2 more")

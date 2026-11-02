@@ -6,8 +6,8 @@ from pathlib import Path
 
 from workflows.code_change.errors import ChangeInputError
 from workflows.code_change.models import Commit
+from workflows.code_change.repo import Dirty
 
-_MAX_LISTED = 10
 _HEADS = "refs/heads/"
 # The reset must not depend on, or be stopped by, hooks the repository or the agent installed.
 _NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
@@ -59,26 +59,23 @@ def _short(ref: str) -> str:
     return ref.removeprefix(_HEADS)
 
 
-def _dirty_paths(cwd: Path) -> list[str]:
-    """Paths with uncommitted or untracked changes. Git-ignored files don't count."""
+def _dirty(cwd: Path) -> Dirty:
+    """What is uncommitted or untracked. Git-ignored files don't count."""
     tokens = (
         _run(cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all")
         .decode("utf-8", errors="replace")
         .split("\0")[:-1]
     )
     paths: list[str] = []
+    untracked: list[str] = []
     i = 0
     while i < len(tokens):
         status, path = tokens[i][:2], tokens[i][3:]
         paths.append(path)
+        if status == "??":
+            untracked.append(path)
         i += 2 if "R" in status or "C" in status else 1  # skip the original path
-    return paths
-
-
-def _summary(paths: list[str]) -> str:
-    listed = ", ".join(paths[:_MAX_LISTED])
-    more = len(paths) - _MAX_LISTED
-    return listed + (f" and {more} more" if more > 0 else "")
+    return Dirty(paths=paths, untracked=untracked)
 
 
 def open_repository(path: Path) -> "GitRepository":
@@ -93,7 +90,7 @@ def open_repository(path: Path) -> "GitRepository":
         raise ChangeInputError(f"codebase must be the top of its git work tree: {path}")
     if _git(path, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
         raise ChangeInputError(f"codebase has no commits: {path}")
-    if _dirty_paths(path):
+    if _dirty(path).paths:
         raise ChangeInputError(f"work tree is not clean: {path}")
     return GitRepository(path, _text(path, "rev-parse", "HEAD"), _ref(path))
 
@@ -131,20 +128,19 @@ class GitRepository:
             raise RuntimeError(f"git merge-base --is-ancestor failed: {stderr}")
         if self.head() == last_checked:
             return "no new commit"
-        dirty = self.dirty_summary()
+        dirty = _dirty(self._path).summary()
         if dirty is not None:
             return f"work left uncommitted: {dirty}"
         return None
 
-    def dirty_summary(self) -> str | None:
-        paths = _dirty_paths(self._path)
-        return _summary(paths) if paths else None
+    def dirty_paths(self) -> Dirty:
+        return _dirty(self._path)
 
     def unchanged(self, head: str) -> bool:
         return (
             self.head() == head
             and _ref(self._path) == self._ref
-            and not _dirty_paths(self._path)
+            and not _dirty(self._path).paths
         )
 
     def write_diff(self, dest: Path) -> None:

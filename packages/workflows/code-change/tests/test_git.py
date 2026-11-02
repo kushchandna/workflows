@@ -223,3 +223,111 @@ def test_inherited_git_dir_ignored(repo, tmp_path, monkeypatch):
     git(other, "init", "-q")
     monkeypatch.setenv("GIT_DIR", str(other / ".git"))
     assert open_repository(repo).base == expected
+
+
+def install_failing_hook(repo: Path, name: str = "post-checkout") -> None:
+    hook = repo / ".git" / "hooks" / name
+    hook.write_text("#!/bin/sh\nexit 2\n")
+    hook.chmod(0o755)
+
+
+def ref(repo: Path) -> str:
+    return git(repo, "symbolic-ref", "HEAD").strip()
+
+
+def test_reset_keeps_an_ignored_file_the_agent_committed(repo):
+    (repo / "ignored.txt").write_text("keep")
+    r = open_repository(repo)
+    git(repo, "add", "-f", "ignored.txt")
+    git(repo, "commit", "-qm", "oops")
+    (repo / "ignored.txt").write_text("edited later")
+    r.reset()
+    assert (repo / "ignored.txt").read_text() == "edited later"
+    assert r.head() == r.base
+    open_repository(repo)  # the work tree is clean again
+
+
+def test_reset_keeps_an_ignored_file_when_the_agent_unignores_it(repo):
+    (repo / "ignored.txt").write_text("keep")
+    r = open_repository(repo)
+    (repo / ".gitignore").write_text("")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "unignore")
+    r.reset()
+    assert (repo / "ignored.txt").read_text() == "keep"
+    assert (repo / ".gitignore").read_text() == "ignored.txt\n"
+    open_repository(repo)
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_reset_is_not_stopped_by_a_failing_hook(repo, detached):
+    if detached:
+        git(repo, "checkout", "-q", "--detach")
+    r = open_repository(repo)
+    commit(repo, "b.py", "fix")
+    git(repo, "checkout", "-q", "-b", "other")
+    (repo / "untracked.py").write_text("x")
+    install_failing_hook(repo)
+    install_failing_hook(repo, "reference-transaction")
+    r.reset()
+    assert r.head() == r.base and not (repo / "untracked.py").exists()
+    assert not (repo / "b.py").exists()
+
+
+def test_a_tag_named_like_the_branch(repo):
+    git(repo, "tag", "main")
+    r = open_repository(repo)
+    commit(repo, "b.py", "fix")
+    assert r.commit_problem(r.base) is None
+    git(repo, "checkout", "-q", "-b", "other")
+    commit(repo, "c.py", "more")
+    r.reset()
+    assert ref(repo) == "refs/heads/main"
+    assert git(repo, "rev-parse", "refs/heads/main").strip() == r.base
+
+
+def test_the_agent_creates_a_tag_named_like_the_branch(repo):
+    r = open_repository(repo)
+    git(repo, "tag", "main")
+    commit(repo, "b.py", "fix")
+    assert r.commit_problem(r.base) is None
+
+
+def test_reset_removes_a_nested_repository(repo):
+    r = open_repository(repo)
+    (repo / "vendor" / "lib").mkdir(parents=True)
+    git(repo / "vendor" / "lib", "init", "-q")
+    r.reset()
+    assert not (repo / "vendor").exists()
+    open_repository(repo)
+
+
+def test_reset_after_the_branch_was_renamed(repo):
+    r = open_repository(repo)
+    commit(repo, "b.py", "fix")
+    git(repo, "branch", "-m", "main", "fix")
+    r.reset()
+    assert ref(repo) == "refs/heads/main"
+    assert git(repo, "rev-parse", "main").strip() == r.base
+    assert not (repo / "b.py").exists()
+
+
+def test_reset_after_a_commit_on_the_starting_branch_then_a_switch(repo):
+    r = open_repository(repo)
+    commit(repo, "b.py", "fix")
+    git(repo, "checkout", "-q", "-b", "other")
+    commit(repo, "c.py", "more")
+    r.reset()
+    assert ref(repo) == "refs/heads/main"
+    assert git(repo, "rev-parse", "main").strip() == r.base
+    assert not (repo / "b.py").exists() and not (repo / "c.py").exists()
+
+
+def test_unchanged_requires_the_starting_branch(repo):
+    r = open_repository(repo)
+    head = commit(repo, "b.py", "fix")
+    assert r.unchanged(head)
+    git(repo, "checkout", "-q", "-b", "scratch")
+    assert not r.unchanged(head)
+    git(repo, "checkout", "-q", "--detach")
+    assert not r.unchanged(head)

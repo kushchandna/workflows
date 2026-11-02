@@ -110,9 +110,10 @@ result = await changer.change(
   - `reason: str | None`: why it ended there;
   - `checks: list[CheckRun]`: empty when checks didn't run;
   - `left_new: str | None` and `left_modified: str | None`: what the checks
-    left in the work tree, new files and tracked files a check changed (a
-    formatter, a lockfile update), each capped at 10 paths and then
+    left in the work tree, new files (staged or not) and tracked files a check
+    changed (a formatter, a lockfile update), each capped at 10 paths and then
     `and <n> more`, or none;
+  - `moved_head: bool`: a check moved HEAD or switched branch;
   - `review: ReviewOutcome | None`: none when review didn't run.
 - `CheckRun`: `command`, `exit_code: int | None` (none on a timeout),
   `timed_out: bool`, `output: str` (the last `check_output_chars` characters
@@ -139,6 +140,8 @@ result = await changer.change(
   below.
 - A git command failing in our own code raises `RuntimeError` with git's
   stderr, after the reset if one is possible.
+- A check's log that can't be written (a full disk) raises `OSError`, after
+  the reset.
 - Failures are never reported as a status.
 
 ### Events
@@ -322,7 +325,12 @@ reset unless completed or reset_on_failure is off
   can't be git-ignored, to commit the change if it belongs to the fix
   (formatting, a lockfile update) and otherwise revert it.
   A check that moves HEAD or switches branch fails the attempt too, with the
-  reason `checks moved HEAD or switched branch`. This keeps the blame on
+  reason `checks moved HEAD or switched branch` and `moved_head` set. A commit
+  the check made is not the agent's work: the loop remembers the HEAD the
+  check left, and the next attempt's commit check fails with `no new commit`
+  until the agent adds a commit beyond it. The retry prompt carries the
+  restore text. Staged and intent-to-add files count as new files; the retry
+  tells the agent to unstage them before deleting them. This keeps the blame on
   the checks: otherwise the review guard, or the next attempt's commit check,
   would report the agent for files it didn't write.
 - **The review guard.** After a review call, our code confirms that HEAD
@@ -361,7 +369,9 @@ line. The code-reviewer notes list this as a gap there.
     positive). Leave the code as it is when stopping;
 - the checks the workflow will run, so the agent can run them before it
   commits, and that files they write which git doesn't ignore fail the attempt
-  (so the agent git-ignores them rather than committing them);
+  (so the agent git-ignores them rather than committing them) and that
+  changes a check makes to tracked files are committed when they belong to the
+  fix;
 - the result file's path and both formats.
 
 From the second attempt on, it also carries:
@@ -376,7 +386,8 @@ From the second attempt on, it also carries:
 - after a commit-check failure, the commit HEAD must descend from and the
   starting branch, with the command to put the repository back
   (`git checkout -f -B <branch> <commit>`, or `git checkout -f --detach
-  <commit>` when the run started detached) and permission to reset or switch
+  <commit>` when the run started detached; the branch name is shell-quoted)
+  and permission to reset or switch
   branches for that one purpose. A bare `git reset --hard` would move the
   branch the agent checked out and leave HEAD attached to it.
 

@@ -99,7 +99,7 @@ stdin, so this is a design question.
 too); `test_timeout` doesn't check that output printed before the timeout is kept; nothing pins
 `truncated=False` for an exact fit; the cancellation path (kill the group, re-raise
 `CancelledError`) has no test. The reviewer checked by hand that the code is right.
-- **Disposition: Deferred** (new tests for R2-1 and R2-2 will cover part of this).
+- **Disposition: Fixed in branch 7** (the four test gaps were closed along with R2-1 and R2-2).
 
 ### R2-5. Low, PLAUSIBLE: PID reuse before the kill
 `checks.py:45`. On normal exit `killpg(proc.pid)` runs after asyncio has reaped the leader. If no
@@ -448,7 +448,7 @@ Each new test was checked against the old code and fails there: the two escaped-
 nine of the ten new git tests, five deliberate mutations of `loop.py`, and the stdin and left-changes
 tests.
 
-Not fixed (low severity, deferred): R1-1, R1-2, R2-4 to R2-7, R3-7 to R3-9, the rest of R3-10, R4-3
+Not fixed (low severity, deferred): R1-1, R1-2, R2-5 to R2-7, R3-7 to R3-9, the rest of R3-10, R4-3
 to R4-6, R4-8, R4-9, R5-5 to R5-7, R6-3 to R6-5.
 
 ## Second round: reviews of branch 7
@@ -479,3 +479,25 @@ Checked and fine in the second round: the reset in about 25 unusual states (merg
 deleted index, symlinks, file/directory swaps, sparse checkout, autocrlf, assume-unchanged and
 skip-worktree flags, submodules), `_Output` edge cases, the dirty test only running when checks are
 configured, and the commit hygiene.
+
+## Third round: review of the second round
+
+A single Opus reviewer audited S1 to S13 and reviewed the three second-round commits. S1, S2 and
+S4 to S12 were confirmed fixed; S3, S7 and S13 were partial. The reviewer's items, and what was done
+(all in branch 7, as the commit after `6c0cd73`):
+
+| # | Finding | Severity | Resolution |
+|---|---|---|---|
+| T1 | Two new tests failed under CPU load (5 of 5 runs at 2x load): the background process sometimes died with its group before escaping, and the descriptor count was off by one depending on timing. | medium | Fixed: the escaped process now signals that it is in place before the shell goes on (`ESCAPE` in the tests), and the count waits one loop turn. Six of six runs pass at 2x load. |
+| T2 | A commit made by a check was counted as the agent's new commit; the run could complete with no commit from the agent. | medium-low | Fixed: the loop remembers the HEAD the check left; the next commit check fails with `no new commit` until the agent adds one beyond it. |
+| T3 | The retry after "checks moved HEAD" had no restore text, said "your earlier commits are still in place", and left the move out of the prompt when a check also failed or left files. | medium-low | Fixed: `Attempt.moved_head`; the retry drops the false sentence and carries the restore text; the move is always shown. |
+| T4 | The first-attempt prompt and `requirements.md` still said "git-ignore" for every file a check writes, wrong for tracked files. | low-medium | Fixed: the first prompt and both docs now tell new files from tracked ones. |
+| T5 | The restore command did not quote the branch name (`fix&co`, `a;b`, `it's`). | low | Fixed: `shlex.quote`. |
+| T6 | The `OSError` on a log that can't be written was undocumented. | low | Documented (README, design). |
+| T7 | Staged and intent-to-add files were reported as tracked, so the advice could lead to committing generated output. | low | Fixed: they count as new files; the retry says to unstage them. |
+| T8 | The log-write test hung instead of failing on a regression. | low | Fixed: it has a timeout. |
+| T9 | Untracked files survive the restore and fail the next commit check. | low | Fixed in the restore text. |
+| T10 | Record keeping: R2-4 listed as deferred; README wording. | low | Fixed. |
+| T11 | Mutation gaps: moved HEAD with a failing check; the rename-entry skip in `_dirty`. | low | Fixed: tests for both. The `codebase.resolve()` gap is still R6-5 (deferred). |
+
+Six mutations of the new logic were checked and all are caught by the tests.

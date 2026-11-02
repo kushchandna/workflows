@@ -93,7 +93,7 @@ stage runs.
 |---|---|---|
 | **Change** | Agent | Makes the change and commits it, in one or more commits, following the commit instructions. Reports either a title and description of what changed and why, or that it needs human input and why. |
 | **Commit check** | Code | Confirms that HEAD has moved past the base commit, that the base commit is still an ancestor of HEAD, and that nothing is left uncommitted. |
-| **Checks** | Code | Runs every configured command, with its input closed, and records each one's exit code and output. The work tree must still be clean afterwards: files a check leaves behind fail the attempt, and the agent is told to git-ignore them. |
+| **Checks** | Code | Runs every configured command, with its input closed, and records each one's exit code and output. The work tree must still be clean afterwards, and HEAD and the branch unchanged: new files a check leaves behind fail the attempt (the agent is told to git-ignore them), and so do changes it makes to tracked files (commit them if they belong to the fix, otherwise revert). |
 | **Review** | Agent, optional | A spec review: compares the commits since the base with the instruction. |
 
 ### The review
@@ -134,7 +134,7 @@ Its verdict is one of:
 | `inconclusive` | The review couldn't decide. The run stops at once, even with tries left. |
 | `failed` | The last try still failed the commit check, a check or the review. |
 
-Failures such as invalid input or an agent crash raise errors and are never
+Failures such as invalid input, an agent crash or a log that can't be written raise errors and are never
 reported as a status.
 
 ### Resetting
@@ -185,7 +185,8 @@ every agent event, labeled with its stage and try number.
 - The review is a spec review against the instruction, not a code review.
 - Resetting to the base commit when a run doesn't complete can be turned off.
 - Files that checks leave in the work tree fail the attempt at the checks
-  stage, with the agent told to git-ignore them.
+  stage: the agent is told to git-ignore new files, and to commit or revert
+  changes to tracked files.
 - Checks run with their input closed.
 
 ## Claude's calls (overridable)

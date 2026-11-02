@@ -30,6 +30,7 @@ NO_CHANGE_RESULT = "no valid change result"
 REVIEW_ASKED_FOR_CHANGES = "review asked for changes"
 NO_REVIEW_RESULT = "no valid review result after retry"
 REVIEW_CHANGED_CODEBASE = "review changed the codebase"
+CHECKS_LEFT_CHANGES = "checks left changes in the work tree"
 
 
 @dataclass
@@ -161,8 +162,14 @@ class _Run:
                     self.settings.check_timeout_seconds,
                     self.settings.check_output_chars,
                 )
-                failed = checks_reason(attempt.checks)
-                if failed is not None:
+                # The commit check left the tree clean, so whatever is dirty now came from the
+                # checks. Blaming it on the review, or on the next commit check, would be wrong.
+                attempt.left_changes = self.repo.dirty_summary()
+                reasons = [checks_reason(attempt.checks)]
+                if attempt.left_changes is not None:
+                    reasons.append(f"{CHECKS_LEFT_CHANGES}: {attempt.left_changes}")
+                failed = "; ".join(r for r in reasons if r is not None)
+                if failed:
                     attempt.ended_at, attempt.reason = ChangeStage.CHECKS, failed
                     continue
 

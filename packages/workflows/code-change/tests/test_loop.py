@@ -562,3 +562,91 @@ async def test_title_is_kept_when_the_review_is_inconclusive(
 async def test_title_is_empty_when_no_attempt_reported_done(fake_repo, tmp_path):
     r = await run(fake_repo, tmp_path, FakeAgent(), max_attempts=2)
     assert (r.status, r.title, r.description) == ("failed", None, None)
+
+
+async def test_checks_that_leave_files_fail_the_attempt_not_the_review(
+    fake_repo, tmp_path, prompt_info
+):
+    fake_repo.dirty_when_exists = [tmp_path / "code" / "report.xml"]
+    reviewer = FakeAgent()
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        reviewer,
+        review=True,
+        max_attempts=1,
+        checks=["touch report.xml"],
+    )
+    assert (r.status, r.reason) == (
+        "failed",
+        "checks: checks left changes in the work tree: report.xml",
+    )
+    a = r.attempts[0]
+    assert (a.ended_at, a.left_changes) == (ChangeStage.CHECKS, "report.xml")
+    assert a.checks[0].exit_code == 0 and reviewer.requests == []
+
+
+async def test_a_failing_check_that_leaves_files_reports_both(
+    fake_repo, tmp_path, prompt_info
+):
+    fake_repo.dirty_when_exists = [tmp_path / "code" / "report.xml"]
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        max_attempts=1,
+        checks=["touch report.xml; exit 1"],
+    )
+    assert r.reason == (
+        "checks: touch report.xml; exit 1 exited with 1; "
+        "checks left changes in the work tree: report.xml"
+    )
+
+
+async def test_the_next_attempt_is_told_what_the_checks_left(
+    fake_repo, tmp_path, prompt_info
+):
+    report = tmp_path / "code" / "report.xml"
+    fake_repo.dirty_when_exists = [report]
+
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 2:
+            fake_repo.dirty_when_exists.clear()  # the agent git-ignored the file
+        fake_repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    def review(req):
+        write_report(prompt_info.result_file(req.prompt), verdict="pass")
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(
+        fake_repo,
+        tmp_path,
+        agent,
+        FakeAgent(respond=review),
+        review=True,
+        checks=["touch report.xml"],
+    )
+    assert r.status == "completed"
+    retry = agent.requests[1].prompt.split("What went wrong last time")[1]
+    assert "report.xml" in retry and "Git-ignore such files" in retry
+    assert r.attempts[0].left_changes == "report.xml"
+    assert r.attempts[1].left_changes is None
+
+
+async def test_nothing_left_means_no_left_changes(fake_repo, tmp_path, prompt_info):
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        checks=["true"],
+    )
+    assert r.status == "completed" and r.attempts[0].left_changes is None

@@ -75,6 +75,12 @@ def _dirty_paths(cwd: Path) -> list[str]:
     return paths
 
 
+def _summary(paths: list[str]) -> str:
+    listed = ", ".join(paths[:_MAX_LISTED])
+    more = len(paths) - _MAX_LISTED
+    return listed + (f" and {more} more" if more > 0 else "")
+
+
 def open_repository(path: Path) -> "GitRepository":
     """The repository at ``path``, or ``ChangeInputError`` if it can't be changed safely."""
     if not path.is_dir():
@@ -125,14 +131,14 @@ class GitRepository:
             raise RuntimeError(f"git merge-base --is-ancestor failed: {stderr}")
         if self.head() == last_checked:
             return "no new commit"
-        dirty = _dirty_paths(self._path)
-        if dirty:
-            listed = ", ".join(dirty[:_MAX_LISTED])
-            more = len(dirty) - _MAX_LISTED
-            return f"work left uncommitted: {listed}" + (
-                f" and {more} more" if more > 0 else ""
-            )
+        dirty = self.dirty_summary()
+        if dirty is not None:
+            return f"work left uncommitted: {dirty}"
         return None
+
+    def dirty_summary(self) -> str | None:
+        paths = _dirty_paths(self._path)
+        return _summary(paths) if paths else None
 
     def unchanged(self, head: str) -> bool:
         return (

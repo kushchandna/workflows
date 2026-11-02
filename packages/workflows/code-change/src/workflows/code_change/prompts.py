@@ -95,7 +95,21 @@ def _retry_section(
             _restore_instructions(expected_head, starting_branch),
         ]
     elif previous.ended_at == ChangeStage.CHECKS:
-        lines += ["These checks failed:", "", _check_failures(previous.checks)]
+        failures = _check_failures(previous.checks)
+        if failures:
+            lines += ["These checks failed:", "", failures, ""]
+        if previous.left_changes is not None:
+            lines += [
+                "The checks left these files in the work tree:",
+                "",
+                _indent(previous.left_changes),
+                "",
+                (
+                    "The work tree must be clean after the checks. Git-ignore such files "
+                    "(and commit that change) or make the check stop writing them. Do not "
+                    "commit them."
+                ),
+            ]
     elif previous.ended_at == ChangeStage.REVIEW:
         comments = previous.review.comments if previous.review else []
         lines += [

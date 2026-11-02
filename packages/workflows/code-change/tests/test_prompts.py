@@ -183,3 +183,34 @@ def test_review_prompt_forbids_running_anything_that_writes(prompt_info):
     )
     assert "already passed" in p and "do not run builds, tests or linters" in p
     assert "new file there makes the whole run fail" in p
+
+
+def test_retry_after_checks_that_left_files():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.CHECKS,
+        reason="checks left changes in the work tree: report.xml, .coverage",
+        checks=[CheckRun(command="pytest", exit_code=0, output="ok")],
+        left_changes="report.xml, .coverage",
+    )
+    retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
+    assert "These checks failed" not in retry
+    assert "    report.xml, .coverage" in retry
+    assert "Git-ignore such files" in retry and "Do not commit them" in retry
+
+
+def test_retry_after_failing_checks_that_also_left_files():
+    prev = Attempt(
+        number=1,
+        ended_at=ChangeStage.CHECKS,
+        reason="x",
+        checks=[CheckRun(command="pytest", exit_code=1, output="FAILED")],
+        left_changes="report.xml",
+    )
+    retry = change(attempt=2, previous=prev).split("What went wrong last time")[1]
+    assert "These checks failed" in retry and "    report.xml" in retry
+
+
+def test_the_first_prompt_warns_about_files_checks_write():
+    p = change()
+    assert "do not commit those files, git-ignore them" in p

@@ -32,7 +32,8 @@ $commit_instructions
 ## Checks
 
 When you are done, the workflow runs these commands from $codebase. Each must exit with 0.
-Run them yourself before you commit.
+Run them yourself before you commit. If a check writes files that git does not ignore (reports,
+coverage, caches), the attempt fails: do not commit those files, git-ignore them.
 
 $checks
 

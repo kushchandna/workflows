@@ -331,3 +331,15 @@ def test_unchanged_requires_the_starting_branch(repo):
     assert not r.unchanged(head)
     git(repo, "checkout", "-q", "--detach")
     assert not r.unchanged(head)
+
+
+def test_dirty_summary(repo):
+    r = open_repository(repo)
+    assert r.dirty_summary() is None
+    (repo / "report.xml").write_text("x")
+    (repo / "ignored.txt").write_text("x")
+    assert r.dirty_summary() == "report.xml"
+    for i in range(11):
+        (repo / f"f{i:02}.py").write_text("x")
+    summary = r.dirty_summary()
+    assert summary is not None and summary.endswith(" and 2 more")

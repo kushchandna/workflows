@@ -61,6 +61,8 @@ class Attempt(BaseModel):
     ended_at: ChangeStage | None = None
     reason: str | None = None
     checks: list[CheckRun] = []
+    # What the checks left in the work tree (uncommitted and untracked paths), if anything.
+    left_changes: str | None = None
     review: ReviewOutcome | None = None
 
 

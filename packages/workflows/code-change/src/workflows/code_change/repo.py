@@ -23,6 +23,10 @@ class Repository(Protocol):
         """Why the agent's commits since ``last_checked`` are not acceptable, or ``None``."""
         ...
 
+    def dirty_summary(self) -> str | None:
+        """The uncommitted and untracked paths as one line (capped), or ``None`` when clean."""
+        ...
+
     def unchanged(self, head: str) -> bool:
         """Whether HEAD is ``head`` and the work tree is clean."""
         ...

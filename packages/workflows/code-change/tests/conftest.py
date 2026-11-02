@@ -34,6 +34,8 @@ class FakeRepository:
     def __init__(self) -> None:
         self._commits: list[Commit] = []
         self.dirty: list[str] = []
+        # Paths that count as dirty while the file exists, to stand in for what a check wrote.
+        self.dirty_when_exists: list[Path] = []
         self.unchanged_result = True
         self.reset_calls = 0
         self.reset_error: Exception | None = None
@@ -46,15 +48,22 @@ class FakeRepository:
         self._commits.append(commit)
         return commit.id
 
+    def dirty_summary(self) -> str | None:
+        paths = self.dirty + [p.name for p in self.dirty_when_exists if p.exists()]
+        return ", ".join(paths) if paths else None
+
     def commit_problem(self, last_checked: str) -> str | None:
         if self.head() == last_checked:
             return "no new commit"
-        if self.dirty:
-            return f"work left uncommitted: {', '.join(self.dirty)}"
-        return None
+        dirty = self.dirty_summary()
+        return f"work left uncommitted: {dirty}" if dirty else None
 
     def unchanged(self, head: str) -> bool:
-        return self.unchanged_result and head == self.head()
+        return (
+            self.unchanged_result
+            and head == self.head()
+            and self.dirty_summary() is None
+        )
 
     def write_diff(self, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)

@@ -484,7 +484,7 @@ configured, and the commit hygiene.
 
 A single Opus reviewer audited S1 to S13 and reviewed the three second-round commits. S1, S2 and
 S4 to S12 were confirmed fixed; S3, S7 and S13 were partial. The reviewer's items, and what was done
-(all in branch 7, as the commit after `6c0cd73`):
+(all in branch 7: `53bb997` for T1, `7e8e2fa` for the rest):
 
 | # | Finding | Severity | Resolution |
 |---|---|---|---|

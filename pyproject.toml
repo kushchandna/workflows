@@ -2,7 +2,7 @@
 name = "workflows-workspace"
 version = "0"
 requires-python = ">=3.11"
-dependencies = ["workflows-agent", "workflows-agent-claude-code", "workflows-code-review"]
+dependencies = ["workflows-agent", "workflows-agent-claude-code", "workflows-code-review", "workflows-code-change"]
 
 [tool.uv]
 package = false
@@ -11,6 +11,7 @@ package = false
 workflows-agent = { workspace = true }
 workflows-agent-claude-code = { workspace = true }
 workflows-code-review = { workspace = true }
+workflows-code-change = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/agents/*", "packages/workflows/*"]
@@ -31,5 +32,5 @@ target-version = "py311"
 known-first-party = ["workflows"]
 
 [tool.pyright]
-include = ["packages", "tests"]
+include = ["packages", "tests", "scripts"]
 pythonVersion = "3.11"

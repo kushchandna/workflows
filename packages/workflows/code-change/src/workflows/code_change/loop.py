@@ -22,14 +22,17 @@ from workflows.code_change.models import (
     ReviewOutcome,
 )
 from workflows.code_change.prompts import change_prompt, review_prompt
-from workflows.code_change.repo import Repository
+from workflows.code_change.repo import Repository, summarize
 
 Status = Literal["completed", "needs_human", "inconclusive", "failed"]
 
 NO_CHANGE_RESULT = "no valid change result"
+NO_NEW_COMMIT = "no new commit"
 REVIEW_ASKED_FOR_CHANGES = "review asked for changes"
 NO_REVIEW_RESULT = "no valid review result after retry"
 REVIEW_CHANGED_CODEBASE = "review changed the codebase"
+CHECKS_LEFT_CHANGES = "checks left changes in the work tree"
+CHECKS_MOVED_HEAD = "checks moved HEAD or switched branch"
 
 
 @dataclass
@@ -110,6 +113,9 @@ class _Run:
     async def attempts(self) -> _Outcome:
         attempts: list[Attempt] = []
         last_checked = self.repo.base
+        # The HEAD a check left behind when it moved HEAD. A commit the check made is not the
+        # agent's work, so the next attempt must add one beyond it.
+        checks_head: str | None = None
         diff_file: Path | None = None
         title: str | None = None
         description: str | None = None
@@ -130,6 +136,8 @@ class _Run:
                 max_attempts=self.input.max_attempts,
                 previous=attempts[-2] if n > 1 else None,
                 diff_file=diff_file,
+                expected_head=last_checked,
+                starting_branch=self.repo.starting_branch,
             )
             await self.call(self.change_agent, ChangeStage.CHANGE, n, 1, prompt)
             report = read_change_report(result_file)
@@ -144,10 +152,17 @@ class _Run:
             title, description = report.title, report.description
 
             problem = self.repo.commit_problem(last_checked)
+            if (
+                problem is None
+                and checks_head is not None
+                and self.repo.head() == checks_head
+            ):
+                problem = NO_NEW_COMMIT
             if problem is not None:
                 attempt.ended_at, attempt.reason = ChangeStage.COMMIT_CHECK, problem
                 continue
             last_checked = self.repo.head()
+            checks_head = None
             diff_file = attempt_dir / "change.diff"
             self.repo.write_diff(diff_file)
 
@@ -159,8 +174,20 @@ class _Run:
                     self.settings.check_timeout_seconds,
                     self.settings.check_output_chars,
                 )
-                failed = checks_reason(attempt.checks)
-                if failed is not None:
+                # The commit check left the tree clean, so whatever is dirty now came from the
+                # checks. Blaming it on the review, or on the next commit check, would be wrong.
+                dirty = self.repo.dirty_paths()
+                attempt.left_new = summarize(dirty.untracked)
+                attempt.left_modified = summarize(dirty.tracked)
+                reasons = [checks_reason(attempt.checks)]
+                if dirty.paths:
+                    reasons.append(f"{CHECKS_LEFT_CHANGES}: {dirty.summary()}")
+                elif not self.repo.unchanged(last_checked):
+                    reasons.append(CHECKS_MOVED_HEAD)
+                    attempt.moved_head = True
+                    checks_head = self.repo.head()
+                failed = "; ".join(r for r in reasons if r is not None)
+                if failed:
                     attempt.ended_at, attempt.reason = ChangeStage.CHECKS, failed
                     continue
 

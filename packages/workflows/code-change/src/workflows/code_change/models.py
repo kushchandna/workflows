@@ -61,6 +61,12 @@ class Attempt(BaseModel):
     ended_at: ChangeStage | None = None
     reason: str | None = None
     checks: list[CheckRun] = []
+    # What the checks left in the work tree, if anything (at most 10 paths each): new files,
+    # and tracked files the checks changed (a formatter, a lockfile update).
+    left_new: str | None = None
+    left_modified: str | None = None
+    # The checks moved HEAD or switched branch.
+    moved_head: bool = False
     review: ReviewOutcome | None = None
 
 

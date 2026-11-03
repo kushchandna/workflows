@@ -54,6 +54,15 @@ class CodeChanger:
                 raise ChangeInputError(
                     f"work folder must be empty or missing: {configured}"
                 )
+        else:
+            temporary = Path(tempfile.gettempdir()).resolve()
+            if temporary.is_relative_to(codebase):
+                # Same reason: the run's files would be untracked work, and the reset would
+                # delete the folder in the middle of the run.
+                raise ChangeInputError(
+                    f"the temporary folder is inside the codebase: {temporary}; "
+                    "point TMPDIR elsewhere or set a work_folder"
+                )
         repo = open_repository(codebase)
         resolved = change_input.model_copy(update={"codebase": codebase})
         if configured is None:

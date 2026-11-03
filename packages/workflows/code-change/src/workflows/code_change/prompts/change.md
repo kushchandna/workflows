@@ -19,7 +19,8 @@ $commit_instructions
 - Follow any testing or validation guidance in the instruction.
 - Commit all of your work, in one or more commits, following the commit instructions. Leave
   nothing uncommitted and no untracked files behind.
-- Do not amend, rebase or reset commits, switch branches, push, or touch any remote.
+- Do not amend, rebase or reset commits, switch branches, push, or touch any remote. The one
+  exception is putting the repository back when a later section tells you to.
 - Stop and report "needs_human" instead of guessing when any of these is true:
   - the change needs a design decision that the instruction does not make;
   - the change turns out to be much larger than the instruction suggests;
@@ -31,7 +32,13 @@ $commit_instructions
 ## Checks
 
 When you are done, the workflow runs these commands from $codebase. Each must exit with 0.
-Run them yourself before you commit.
+Run them yourself before you commit. The work tree must be clean afterwards, or the attempt
+fails:
+
+- If a check writes new files that git does not ignore (reports, coverage, caches), do not commit
+  them; git-ignore them.
+- If a check changes tracked files (a formatter, a lockfile update), commit the change when it
+  belongs to the fix. Otherwise make sure the check leaves those files alone.
 
 $checks
 

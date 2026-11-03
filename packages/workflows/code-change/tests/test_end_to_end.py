@@ -1,5 +1,6 @@
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -158,3 +159,42 @@ async def test_dirty_codebase_rejected(repo, prompt_info):
     with pytest.raises(ChangeInputError, match="not clean"):
         await CodeChanger(agent).change(ChangeInput(codebase=repo, instruction="x"))
     assert agent.requests == []
+
+
+async def test_temp_folder_inside_the_codebase_is_rejected(
+    repo, monkeypatch, prompt_info
+):
+    (repo / "tmp").mkdir()  # an empty folder keeps the work tree clean
+    monkeypatch.setattr(tempfile, "tempdir", str(repo / "tmp"))
+    agent = real_agent(prompt_info)
+    with pytest.raises(
+        ChangeInputError, match="temporary folder is inside the codebase"
+    ):
+        await CodeChanger(agent).change(ChangeInput(codebase=repo, instruction="x"))
+    assert agent.requests == []
+
+
+async def test_symlinked_temp_folder_inside_the_codebase_is_rejected(
+    repo, tmp_path, monkeypatch, prompt_info
+):
+    (repo / "tmp").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(repo / "tmp")
+    monkeypatch.setattr(tempfile, "tempdir", str(link))
+    agent = real_agent(prompt_info)
+    with pytest.raises(
+        ChangeInputError, match="temporary folder is inside the codebase"
+    ):
+        await CodeChanger(agent).change(ChangeInput(codebase=repo, instruction="x"))
+    assert agent.requests == []
+
+
+async def test_a_temp_folder_next_to_the_codebase_is_fine(
+    repo, tmp_path, monkeypatch, prompt_info
+):
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "elsewhere"))
+    r = await CodeChanger(real_agent(prompt_info)).change(
+        ChangeInput(codebase=repo, instruction="Add b.py")
+    )
+    assert r.status == "completed"

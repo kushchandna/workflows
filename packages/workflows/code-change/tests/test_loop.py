@@ -417,3 +417,357 @@ async def test_events_and_requests(fake_repo, tmp_path, prompt_info):
     assert req.working_folder == tmp_path / "code"
     assert req.extra_folders == [tmp_path / "work"]
     assert req.timeout_seconds == 1800
+
+
+async def test_commit_check_retry_names_the_last_checked_commit(
+    fake_repo, tmp_path, prompt_info
+):
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 1:
+            fake_repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(fake_repo, tmp_path, agent, max_attempts=3, checks=["exit 1"])
+    assert [a.ended_at for a in r.attempts] == [
+        ChangeStage.CHECKS,
+        ChangeStage.COMMIT_CHECK,
+        ChangeStage.COMMIT_CHECK,
+    ]
+    assert "descend from commit `c1`" in agent.requests[2].prompt
+    assert "git checkout -f -B main c1" in agent.requests[2].prompt
+
+
+async def test_review_guard_compares_with_the_last_checked_commit(
+    fake_repo, tmp_path, prompt_info
+):
+    def review(req):
+        fake_repo.commit("sneaky")
+        write_report(prompt_info.result_file(req.prompt), verdict="pass")
+        return "ok"
+
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        FakeAgent(respond=review),
+        review=True,
+    )
+    assert (r.status, r.reason) == ("inconclusive", "review changed the codebase")
+
+
+async def test_review_guard_runs_after_the_first_call_even_without_a_result(
+    fake_repo, tmp_path, prompt_info
+):
+    def review(req):
+        fake_repo.unchanged_result = False
+        return "ok"
+
+    reviewer = FakeAgent(respond=review)
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        reviewer,
+        review=True,
+    )
+    assert (r.status, r.reason) == ("inconclusive", "review changed the codebase")
+    assert len(reviewer.requests) == 1
+
+
+async def test_review_guard_runs_after_the_retry(fake_repo, tmp_path, prompt_info):
+    def review(req):
+        if len(reviewer.requests) == 2:
+            fake_repo.unchanged_result = False
+            write_report(prompt_info.result_file(req.prompt), verdict="pass")
+        return "ok"
+
+    reviewer = FakeAgent(respond=review)
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        reviewer,
+        review=True,
+    )
+    assert (r.status, r.reason) == ("inconclusive", "review changed the codebase")
+    assert len(reviewer.requests) == 2
+
+
+def titled_agent(fake_repo, prompt_info, last_report=None):
+    """Commits and reports ``done`` with a title that names the attempt."""
+
+    def respond(req):
+        n = prompt_info.attempt(req.prompt)
+        fake_repo.commit(f"fix {n}")
+        report = {"outcome": "done", "title": f"t{n}", "description": f"d{n}"}
+        if last_report is not None and n == 3:
+            report = last_report
+        write_report(prompt_info.result_file(req.prompt), **report)
+        return "ok"
+
+    return FakeAgent(respond=respond)
+
+
+async def test_title_comes_from_the_last_done_result(fake_repo, tmp_path, prompt_info):
+    r = await run(
+        fake_repo,
+        tmp_path,
+        titled_agent(fake_repo, prompt_info),
+        max_attempts=2,
+        checks=["exit 1"],
+    )
+    assert (r.status, r.title, r.description) == ("failed", "t2", "d2")
+
+
+async def test_title_is_kept_when_a_later_attempt_needs_a_human(
+    fake_repo, tmp_path, prompt_info
+):
+    agent = titled_agent(
+        fake_repo,
+        prompt_info,
+        last_report={"outcome": "needs_human", "reason": "Too big."},
+    )
+    r = await run(fake_repo, tmp_path, agent, max_attempts=3, checks=["exit 1"])
+    assert (r.status, r.title, r.description) == ("needs_human", "t2", "d2")
+
+
+async def test_title_is_kept_when_the_review_is_inconclusive(
+    fake_repo, tmp_path, prompt_info
+):
+    def review(req):
+        write_report(
+            prompt_info.result_file(req.prompt),
+            verdict="inconclusive",
+            reason="Unclear.",
+        )
+        return "ok"
+
+    r = await run(
+        fake_repo,
+        tmp_path,
+        titled_agent(fake_repo, prompt_info),
+        FakeAgent(respond=review),
+        review=True,
+    )
+    assert (r.status, r.title, r.description) == ("inconclusive", "t1", "d1")
+
+
+async def test_title_is_empty_when_no_attempt_reported_done(fake_repo, tmp_path):
+    r = await run(fake_repo, tmp_path, FakeAgent(), max_attempts=2)
+    assert (r.status, r.title, r.description) == ("failed", None, None)
+
+
+async def test_checks_that_leave_files_fail_the_attempt_not_the_review(
+    fake_repo, tmp_path, prompt_info
+):
+    fake_repo.dirty_when_exists = [tmp_path / "code" / "report.xml"]
+    reviewer = FakeAgent()
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        reviewer,
+        review=True,
+        max_attempts=1,
+        checks=["touch report.xml"],
+    )
+    assert (r.status, r.reason) == (
+        "failed",
+        "checks: checks left changes in the work tree: report.xml",
+    )
+    a = r.attempts[0]
+    assert (a.ended_at, a.left_new, a.left_modified) == (
+        ChangeStage.CHECKS,
+        "report.xml",
+        None,
+    )
+    assert a.checks[0].exit_code == 0 and reviewer.requests == []
+
+
+async def test_a_failing_check_that_leaves_files_reports_both(
+    fake_repo, tmp_path, prompt_info
+):
+    fake_repo.dirty_when_exists = [tmp_path / "code" / "report.xml"]
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        max_attempts=1,
+        checks=["touch report.xml; exit 1"],
+    )
+    assert r.reason == (
+        "checks: touch report.xml; exit 1 exited with 1; "
+        "checks left changes in the work tree: report.xml"
+    )
+
+
+async def test_the_next_attempt_is_told_what_the_checks_left(
+    fake_repo, tmp_path, prompt_info
+):
+    report = tmp_path / "code" / "report.xml"
+    fake_repo.dirty_when_exists = [report]
+
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 2:
+            fake_repo.dirty_when_exists.clear()  # the agent git-ignored the file
+        fake_repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    def review(req):
+        write_report(prompt_info.result_file(req.prompt), verdict="pass")
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(
+        fake_repo,
+        tmp_path,
+        agent,
+        FakeAgent(respond=review),
+        review=True,
+        checks=["touch report.xml"],
+    )
+    assert r.status == "completed"
+    retry = agent.requests[1].prompt.split("What went wrong last time")[1]
+    assert "report.xml" in retry and "Git-ignore such files" in retry
+    assert r.attempts[0].left_new == "report.xml"
+    assert r.attempts[1].left_new is None
+
+
+async def test_nothing_left_means_no_left_changes(fake_repo, tmp_path, prompt_info):
+    r = await run(
+        fake_repo,
+        tmp_path,
+        committing_agent(fake_repo, prompt_info),
+        checks=["true"],
+    )
+    assert r.status == "completed"
+    assert (r.attempts[0].left_new, r.attempts[0].left_modified) == (None, None)
+
+
+async def test_checks_that_change_tracked_files_are_told_apart(
+    fake_repo, tmp_path, prompt_info
+):
+    fake_repo.tracked_when_exists = [tmp_path / "code" / "a.py"]
+
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 2:
+            fake_repo.tracked_when_exists.clear()  # the agent committed the change
+        fake_repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(fake_repo, tmp_path, agent, checks=["touch a.py"])
+    a = r.attempts[0]
+    assert (a.left_new, a.left_modified) == (None, "a.py")
+    assert a.reason == "checks left changes in the work tree: a.py"
+    retry = agent.requests[1].prompt.split("What went wrong last time")[1]
+    assert "tracked files" in retry and "commit it" in retry
+    assert "Git-ignore" not in retry
+    assert r.status == "completed"
+
+
+async def test_a_check_that_moves_head_is_blamed_on_the_checks(
+    fake_repo, tmp_path, prompt_info
+):
+    class MovingRepo(type(fake_repo)):
+        def unchanged(self, head):
+            return False
+
+    repo = MovingRepo()
+    reviewer = FakeAgent()
+    r = await run(
+        repo,
+        tmp_path,
+        committing_agent(repo, prompt_info),
+        reviewer,
+        review=True,
+        max_attempts=1,
+        checks=["true"],
+    )
+    assert (r.status, r.reason) == (
+        "failed",
+        "checks: checks moved HEAD or switched branch",
+    )
+    assert reviewer.requests == []
+
+
+async def test_a_failing_check_that_also_moves_head_reports_both(
+    fake_repo, tmp_path, prompt_info
+):
+    class Moving(type(fake_repo)):
+        def unchanged(self, head):
+            return False
+
+    repo = Moving()
+    r = await run(
+        repo,
+        tmp_path,
+        committing_agent(repo, prompt_info),
+        max_attempts=1,
+        checks=["exit 1"],
+    )
+    assert (
+        r.reason == "checks: exit 1 exited with 1; checks moved HEAD or switched branch"
+    )
+    assert r.attempts[0].moved_head is True
+
+
+async def test_a_commit_made_by_a_check_is_not_the_agents_work(
+    fake_repo, tmp_path, prompt_info
+):
+    flag = tmp_path / "code" / "committed.flag"
+
+    class CommittingChecks(type(fake_repo)):
+        committed = False
+
+        def dirty_paths(self):
+            if flag.exists() and not self.committed:
+                self.committed = True
+                self.commit("made by the check")
+            return super().dirty_paths()
+
+    repo = CommittingChecks()
+
+    def respond(req):
+        if prompt_info.attempt(req.prompt) == 1:
+            repo.commit("fix")
+        write_report(
+            prompt_info.result_file(req.prompt),
+            outcome="done",
+            title="t",
+            description="d",
+        )
+        return "ok"
+
+    agent = FakeAgent(respond=respond)
+    r = await run(
+        repo, tmp_path, agent, max_attempts=2, checks=["touch committed.flag"]
+    )
+    assert r.attempts[0].moved_head is True
+    assert [a.ended_at for a in r.attempts] == [
+        ChangeStage.CHECKS,
+        ChangeStage.COMMIT_CHECK,
+    ]
+    assert (r.status, r.reason) == ("failed", "commit-check: no new commit")
+    retry = agent.requests[1].prompt.split("What went wrong last time")[1]
+    assert "The checks moved HEAD or switched branch." in retry
+    assert "git checkout -f -B main c1" in retry

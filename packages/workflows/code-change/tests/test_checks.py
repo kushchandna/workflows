@@ -1,6 +1,13 @@
+import asyncio
+import io
+import os
+import shutil
 import time
 
-from workflows.code_change.checks import checks_reason, run_checks
+import pytest
+
+from workflows.code_change import checks
+from workflows.code_change.checks import _Output, checks_reason, run_checks
 
 
 async def run(tmp_path, commands, timeout=None, keep=20000):
@@ -66,3 +73,147 @@ async def test_non_utf8_output(tmp_path):
 
 def test_reason_none_when_all_pass():
     assert checks_reason([]) is None
+
+
+needs_setsid = pytest.mark.skipif(shutil.which("setsid") is None, reason="needs setsid")
+
+# Starts a process in a session of its own and waits until it is really there, so it has left
+# the check's process group before the shell goes on. Without the wait, a loaded machine can
+# kill it together with the group.
+ESCAPE = (
+    "rm -f ready; setsid sh -c 'touch ready; exec sleep 5' & "
+    "while [ ! -e ready ]; do sleep 0.02; done"
+)
+
+
+@needs_setsid
+async def test_escaped_child_does_not_hold_the_run(tmp_path):
+    start = time.monotonic()
+    [r] = await run(tmp_path, [f"{ESCAPE}; echo started"])
+    assert (r.exit_code, r.output) == (0, "started\n")
+    assert time.monotonic() - start < 10
+
+
+@needs_setsid
+async def test_escaped_child_does_not_outlast_the_timeout(tmp_path):
+    start = time.monotonic()
+    [r] = await run(tmp_path, [f"echo start; {ESCAPE}; sleep 30"], timeout=1.5)
+    assert (r.timed_out, r.output) == (True, "start\n")
+    assert time.monotonic() - start < 10
+
+
+async def test_output_before_a_timeout_is_kept(tmp_path):
+    [r] = await run(tmp_path, ["echo partial; sleep 5"], timeout=0.3)
+    assert (r.timed_out, r.output, r.truncated) == (True, "partial\n", False)
+    assert (tmp_path / "logs" / "1.log").read_bytes() == b"partial\n"
+
+
+async def test_truncation_counts_characters_not_bytes(tmp_path):
+    [r] = await run(tmp_path, ["printf 'h\\303\\251llo\\342\\202\\254'"], keep=2)
+    assert (r.output, r.truncated) == ("o\u20ac", True)
+
+
+async def test_output_that_fits_exactly_is_not_truncated(tmp_path):
+    [r] = await run(tmp_path, ["printf abc"], keep=3)
+    assert (r.output, r.truncated) == ("abc", False)
+
+
+async def test_large_output_is_streamed_to_the_log(tmp_path):
+    [r] = await run(tmp_path, ["yes x | head -c 3000000"], keep=10)
+    assert (r.output, r.truncated) == ("x\nx\nx\nx\nx\n", True)
+    assert (tmp_path / "logs" / "1.log").stat().st_size == 3000000
+
+
+async def test_cancellation_kills_the_check(tmp_path):
+    pid_file = tmp_path / "pid"
+    task = asyncio.create_task(run(tmp_path, [f"echo $$ > {pid_file}; sleep 30"]))
+    while not (pid_file.exists() and pid_file.read_text().strip()):
+        await asyncio.sleep(0.05)
+    pid = int(pid_file.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        pytest.fail("the check is still running")
+
+
+async def test_checks_do_not_read_the_callers_stdin(tmp_path):
+    read_end, write_end = os.pipe()
+    os.write(write_end, b"secret\n")
+    os.close(write_end)
+    saved = os.dup(0)
+    os.dup2(read_end, 0)
+    os.close(read_end)
+    try:
+        [r] = await run(tmp_path, ['read x && echo "got:$x" || echo eof'])
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+    assert r.output == "eof\n"
+
+
+def test_output_memory_is_bounded():
+    log = io.BytesIO()
+    output = _Output(log, keep_chars=5)
+    for _ in range(1000):
+        output.add(b"x" * 1000)
+        assert output.buffered <= 4 * 5 + 8
+    assert len(log.getvalue()) == 1_000_000
+    assert output.kept() == ("xxxxx", True)
+
+
+@pytest.mark.skipif(not os.path.exists("/dev/full"), reason="needs /dev/full")
+async def test_a_failing_log_write_stops_the_check(tmp_path):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "1.log").symlink_to("/dev/full")
+    start = time.monotonic()
+    with pytest.raises(OSError):
+        await run(tmp_path, ["yes x | head -c 5000000"], timeout=30)
+    assert time.monotonic() - start < 10
+
+
+def open_fds() -> int:
+    return len(os.listdir("/proc/self/fd"))
+
+
+needs_proc = pytest.mark.skipif(
+    not os.path.isdir("/proc/self/fd"), reason="needs /proc/self/fd"
+)
+
+
+@needs_setsid
+@needs_proc
+async def test_escaped_checks_do_not_leak_descriptors(tmp_path):
+    await run(tmp_path, [ESCAPE])
+    await asyncio.sleep(0.05)
+    before = open_fds()
+    for _ in range(3):
+        await run(tmp_path, [ESCAPE])
+    await asyncio.sleep(0.05)  # the pipe is closed on the next turn of the event loop
+    assert open_fds() <= before
+
+
+@needs_setsid
+async def test_cancelling_while_waiting_for_the_output_closes_the_pipe(
+    tmp_path, monkeypatch
+):
+    closed = []
+    real_close = checks._close_transport
+    monkeypatch.setattr(
+        checks, "_close_transport", lambda proc: (closed.append(proc), real_close(proc))
+    )
+    task = asyncio.create_task(run(tmp_path, [ESCAPE]))
+    while not (tmp_path / "ready").exists():
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.3)  # the shell has exited; the reader is in its grace period
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(closed) == 1

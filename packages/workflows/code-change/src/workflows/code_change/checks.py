@@ -15,6 +15,16 @@ def _kill_group(pid: int) -> None:
         pass
 
 
+async def _wait_for_exit(proc: asyncio.subprocess.Process) -> None:
+    """Waits for the process itself to exit.
+
+    On Python 3.11, ``Process.wait()`` also waits for the process's pipes to close, which
+    never happens while a leftover child still holds them.
+    """
+    while proc.returncode is None:
+        await asyncio.sleep(0.05)
+
+
 async def _drain(stream: asyncio.StreamReader, buffer: bytearray) -> None:
     while chunk := await stream.read(65536):
         buffer += chunk
@@ -37,14 +47,14 @@ async def _run_one(
     timed_out = False
     try:
         try:
-            await asyncio.wait_for(proc.wait(), timeout_seconds)
+            await asyncio.wait_for(_wait_for_exit(proc), timeout_seconds)
         except TimeoutError:
             timed_out = True
         finally:
             # Whatever the command left running must not keep the pipe open.
             _kill_group(proc.pid)
         if timed_out:
-            await proc.wait()
+            await _wait_for_exit(proc)
         await reader
     finally:
         reader.cancel()

@@ -1,3 +1,4 @@
+from workflows.code_change.changer import CodeChanger
 from workflows.code_change.errors import ChangeInputError
 from workflows.code_change.models import (
     Attempt,
@@ -20,6 +21,7 @@ __all__ = [
     "ChangeSettings",
     "ChangeStage",
     "CheckRun",
+    "CodeChanger",
     "Commit",
     "ReviewOutcome",
 ]

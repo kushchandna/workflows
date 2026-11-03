@@ -2,10 +2,14 @@
 
 ## Why this project exists
 
-While building a GitLab merge request reviewer and a Sonar issue fixer, most of the effort went into
-deployment and process, not into the quality of the agentic work itself. This project separates the
-two: each workflow focuses only on doing its agentic job well, behind a fixed input and output, and
-the end products (the MR bot, the Sonar fixer, and others) integrate it and handle the platform side.
+A GitLab merge request reviewer and a Sonar issue fixer were first built with their review and fix
+logic inside the end products, next to the deployment and process work. That logic stayed simple: the
+code review and code change flows there were much less detailed than the ones here. Both can still
+improve, but the lesson holds: the engine, the part that does the agentic work, should be built and
+improved independently of the products that use it.
+
+So each workflow does one agentic job behind a fixed input and output, and the end products (the MR
+bot, the Sonar fixer, and others) integrate it and handle the platform side.
 
 Thin workflows are fine. A workflow is worth having when it gives end products a fixed contract,
 even if workflow code guarantees little beyond that.

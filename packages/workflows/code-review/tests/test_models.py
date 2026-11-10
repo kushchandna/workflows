@@ -31,7 +31,7 @@ def test_settings_defaults():
         s.files_per_batch,
         s.directory_break_min_fill,
         s.max_parallel_calls,
-        s.agent_timeout_seconds,
+        s.harness_timeout_seconds,
         s.work_folder,
     ) == (1000, 10, 0.5, 4, 1800, None)
 
@@ -43,7 +43,7 @@ def test_settings_defaults():
         {"files_per_batch": 0},
         {"directory_break_min_fill": 1.5},
         {"max_parallel_calls": 0},
-        {"agent_timeout_seconds": 0},
+        {"harness_timeout_seconds": 0},
     ],
 )
 def test_settings_reject_bad_values(bad):

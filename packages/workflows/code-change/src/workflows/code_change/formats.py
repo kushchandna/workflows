@@ -1,4 +1,4 @@
-"""The result files agents write, and the readers that check them."""
+"""The result files harnesses write, and the readers that check them."""
 
 from pathlib import Path
 from typing import Annotated, Literal

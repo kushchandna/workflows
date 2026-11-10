@@ -7,7 +7,6 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from workflows.agent import Agent, AgentError
 from workflows.code_review.batching import make_batches
 from workflows.code_review.calls import CallRunner
 from workflows.code_review.changes import changes_from_diffs
@@ -46,24 +45,25 @@ from workflows.code_review.prompts import (
 )
 from workflows.code_review.threads import load_threads, route_threads
 from workflows.code_review.validation import Scope
+from workflows.harness import Harness, HarnessError
 
 NO_RESULT = "no valid result after retry"
 
 
 class CodeReviewer:
-    """Reviews a change in several agent passes and returns a status, comments and coverage.
+    """Reviews a change in several harness passes and returns a status, comments and coverage.
 
-    The end product supplies the agents; this class never chooses a model.
+    The end product supplies the harnesses; this class never chooses a model.
     """
 
     def __init__(
         self,
-        default_agent: Agent,
-        pass_agents: Mapping[ReviewPass, Agent] | None = None,
+        default_harness: Harness,
+        pass_harnesses: Mapping[ReviewPass, Harness] | None = None,
         settings: ReviewSettings | None = None,
     ) -> None:
-        self._default_agent = default_agent
-        self._pass_agents = dict(pass_agents or {})
+        self._default_harness = default_harness
+        self._pass_harnesses = dict(pass_harnesses or {})
         self._settings = settings or ReviewSettings()
 
     async def review(
@@ -138,10 +138,10 @@ class CodeReviewer:
 
         settings = self._settings
         runner = CallRunner(
-            agents=lambda p: self._pass_agents.get(p, self._default_agent),
+            harnesses=lambda p: self._pass_harnesses.get(p, self._default_harness),
             working_folder=codebase.path if codebase else work,
             work=work,
-            timeout_seconds=settings.agent_timeout_seconds,
+            timeout_seconds=settings.harness_timeout_seconds,
             semaphore=asyncio.Semaphore(settings.max_parallel_calls),
             on_event=on_event,
         )
@@ -270,7 +270,7 @@ class CodeReviewer:
         )
         final = consolidation.result
         if not isinstance(final, ConsolidationResult):
-            raise AgentError("consolidation produced no usable result")
+            raise HarnessError("consolidation produced no usable result")
         dropped += consolidation.dropped
         pass_coverage[ReviewPass.CONSOLIDATION] = PassCoverage(
             review_pass=ReviewPass.CONSOLIDATION, state="ran"
@@ -350,7 +350,7 @@ def _write(path: Path, data: BaseModel | list[Any]) -> None:
 
 
 def _with_thread_target(comment: Comment, threads: dict[str, Thread]) -> Comment:
-    """A reply carries its thread's own target, never one an agent made up."""
+    """A reply carries its thread's own target, never one the model made up."""
     thread = threads.get(comment.reply_to or "")
     return comment.model_copy(update={"target": thread.target}) if thread else comment
 

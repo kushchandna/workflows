@@ -4,8 +4,6 @@ import subprocess
 
 import pytest
 
-from workflows.agent import AgentError
-from workflows.agent.testing import FakeAgent
 from workflows.code_review import (
     Codebase,
     CodeReviewer,
@@ -15,6 +13,8 @@ from workflows.code_review import (
     ReviewPass,
     ReviewSettings,
 )
+from workflows.harness import HarnessError
+from workflows.harness.testing import FakeHarness
 
 DIFF = "diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1 +1 @@\n-a\n+b\n"
 BINARY = "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n"
@@ -33,11 +33,11 @@ def diffs(tmp_path):
 def scripted(
     prompt_info, per_file=None, passes=None, status="approved", consolidation=()
 ):
-    """One agent that answers every pass; the pass is read from the output folder."""
+    """One harness that answers every pass; the pass is read from the output folder."""
 
     def respond(req):
         out = prompt_info.output_folder(req.prompt)
-        name = out.parts[out.parts.index("agent-output") + 1]
+        name = out.parts[out.parts.index("harness-output") + 1]
         if name == "per-file":
             for n, path in prompt_info.slots(req.prompt):
                 body = (per_file or (lambda p: {"path": p, "summary": "ok"}))(path)
@@ -57,14 +57,14 @@ def scripted(
 
 def pass_name(prompt_info, request):
     out = prompt_info.output_folder(request.prompt)
-    return out.parts[out.parts.index("agent-output") + 1]
+    return out.parts[out.parts.index("harness-output") + 1]
 
 
 async def test_happy_path(tmp_path, diffs, prompt_info):
     work = tmp_path / "work"
     comment = {"target": {"type": "change"}, "body": "LGTM"}
-    agent = FakeAgent(scripted(prompt_info, consolidation=[comment]))
-    r = await CodeReviewer(agent, settings=ReviewSettings(work_folder=work)).review(
+    harness = FakeHarness(scripted(prompt_info, consolidation=[comment]))
+    r = await CodeReviewer(harness, settings=ReviewSettings(work_folder=work)).review(
         ReviewInput(diffs=diffs)
     )
     assert r.status == "approved"
@@ -82,7 +82,7 @@ async def test_happy_path(tmp_path, diffs, prompt_info):
     assert (work / "review-passes" / "consolidation" / "result.json").exists()
     assert (work / "input" / "diffs" / "a.py.diff").exists()
     assert json.loads((work / "input" / "threads.json").read_text()) == []
-    req = agent.requests[0]
+    req = harness.requests[0]
     assert (req.timeout_seconds, req.extra_folders, req.working_folder) == (
         1800,
         [work],
@@ -94,16 +94,16 @@ async def test_unreviewed_file_forces_inconclusive(diffs, prompt_info):
     def per_file(p):
         return None if p == "b.py" else {"path": p, "summary": "ok"}
 
-    agent = FakeAgent(scripted(prompt_info, per_file=per_file))
-    r = await CodeReviewer(agent).review(ReviewInput(diffs=diffs))
+    harness = FakeHarness(scripted(prompt_info, per_file=per_file))
+    r = await CodeReviewer(harness).review(ReviewInput(diffs=diffs))
     assert r.status == "inconclusive"
     files = [(f.path, f.state, f.reason) for f in r.coverage.files]
     assert ("b.py", "unreviewed", "no valid result after retry") in files
 
 
 async def test_failed_pass_forces_inconclusive(diffs, prompt_info):
-    agent = FakeAgent(scripted(prompt_info, passes={"test-coverage": None}))
-    r = await CodeReviewer(agent).review(ReviewInput(diffs=diffs))
+    harness = FakeHarness(scripted(prompt_info, passes={"test-coverage": None}))
+    r = await CodeReviewer(harness).review(ReviewInput(diffs=diffs))
     assert r.status == "inconclusive"
     passes = {p.review_pass: (p.state, p.reason) for p in r.coverage.passes}
     assert passes[ReviewPass.TEST_COVERAGE] == ("failed", "no valid result after retry")
@@ -117,8 +117,8 @@ async def test_failed_consolidation_raises(diffs, prompt_info):
             return inner(req)
         return "wrote nothing"
 
-    with pytest.raises(AgentError, match="consolidation"):
-        await CodeReviewer(FakeAgent(respond)).review(ReviewInput(diffs=diffs))
+    with pytest.raises(HarnessError, match="consolidation"):
+        await CodeReviewer(FakeHarness(respond)).review(ReviewInput(diffs=diffs))
 
 
 THREAD = {
@@ -158,16 +158,16 @@ async def test_replies_and_actions_from_routed_pass_survive(
             }
         return result
 
-    agent = FakeAgent(scripted(prompt_info, per_file=per_file))
+    harness = FakeHarness(scripted(prompt_info, per_file=per_file))
     review_input = ReviewInput(diffs=diffs, discussions=[threads], reviewer_name="bot")
-    r = await CodeReviewer(agent).review(review_input)
+    r = await CodeReviewer(harness).review(review_input)
     # the per-file "new" comment is consolidation's to keep; the reply always survives
     assert [(c.body, c.reply_to) for c in r.comments] == [("Done, thanks", "t1")]
-    # and a reply carries its thread's own target, not whatever the agent wrote
+    # and a reply carries its thread's own target, not whatever the harness wrote
     assert r.comments[0].target.type == "lines"
     assert [(a.thread_id, a.action) for a in r.thread_actions] == [("t1", "resolve")]
     consolidation = [
-        q for q in agent.requests if pass_name(prompt_info, q) == "consolidation"
+        q for q in harness.requests if pass_name(prompt_info, q) == "consolidation"
     ]
     assert "Threads you may act on: none" in consolidation[0].prompt
 
@@ -176,13 +176,13 @@ async def test_overall_gets_change_level_threads(tmp_path, diffs, prompt_info):
     change_thread = {**THREAD, "id": "t2", "target": {"type": "change"}}
     threads = tmp_path / "threads.json"
     threads.write_text(json.dumps([THREAD, change_thread]))
-    agent = FakeAgent(scripted(prompt_info))
-    await CodeReviewer(agent).review(ReviewInput(diffs=diffs, discussions=[threads]))
+    harness = FakeHarness(scripted(prompt_info))
+    await CodeReviewer(harness).review(ReviewInput(diffs=diffs, discussions=[threads]))
     offered = {
         pass_name(prompt_info, q): q.prompt.split("Threads you may act on: ")[1].split(
             "\n"
         )[0]
-        for q in agent.requests
+        for q in harness.requests
     }
     assert offered["overall"] == "t2"
     assert offered["per-file"] == "t1"
@@ -192,9 +192,9 @@ async def test_overall_gets_change_level_threads(tmp_path, diffs, prompt_info):
 
 async def test_no_changes(tmp_path, prompt_info):
     (tmp_path / "empty").mkdir()
-    agent = FakeAgent(scripted(prompt_info))
-    r = await CodeReviewer(agent).review(ReviewInput(diffs=tmp_path / "empty"))
-    assert r.status == "approved" and agent.requests == []
+    harness = FakeHarness(scripted(prompt_info))
+    r = await CodeReviewer(harness).review(ReviewInput(diffs=tmp_path / "empty"))
+    assert r.status == "approved" and harness.requests == []
     assert {(p.state, p.reason) for p in r.coverage.passes} == {
         ("skipped", "no changes")
     }
@@ -205,9 +205,9 @@ async def test_only_binary_files(tmp_path, prompt_info):
     d = tmp_path / "d"
     d.mkdir()
     (d / "img.png.diff").write_text(BINARY)
-    agent = FakeAgent(scripted(prompt_info))
-    r = await CodeReviewer(agent).review(ReviewInput(diffs=d))
-    assert r.status == "approved" and agent.requests == []
+    harness = FakeHarness(scripted(prompt_info))
+    r = await CodeReviewer(harness).review(ReviewInput(diffs=d))
+    assert r.status == "approved" and harness.requests == []
     assert {(p.state, p.reason) for p in r.coverage.passes} == {
         ("skipped", "only binary files")
     }
@@ -215,8 +215,8 @@ async def test_only_binary_files(tmp_path, prompt_info):
 
 
 async def test_input_errors(tmp_path, diffs):
-    agent = FakeAgent()
-    reviewer = CodeReviewer(agent)
+    harness = FakeHarness()
+    reviewer = CodeReviewer(harness)
     bad_threads = tmp_path / "bad.json"
     bad_threads.write_text("nope")
     for bad in [
@@ -227,44 +227,44 @@ async def test_input_errors(tmp_path, diffs):
     ]:
         with pytest.raises(ReviewInputError):
             await reviewer.review(bad)
-    assert agent.requests == []
+    assert harness.requests == []
 
 
 async def test_work_folder_must_be_empty(tmp_path, diffs):
     work = tmp_path / "work"
     work.mkdir()
     (work / "old.txt").write_text("x")
-    agent = FakeAgent()
-    reviewer = CodeReviewer(agent, settings=ReviewSettings(work_folder=work))
+    harness = FakeHarness()
+    reviewer = CodeReviewer(harness, settings=ReviewSettings(work_folder=work))
     with pytest.raises(ReviewInputError):
         await reviewer.review(ReviewInput(diffs=diffs))
-    assert agent.requests == [] and (work / "old.txt").exists()
+    assert harness.requests == [] and (work / "old.txt").exists()
 
 
 async def test_temporary_work_folder_is_removed(diffs, prompt_info):
-    agent = FakeAgent(scripted(prompt_info))
-    await CodeReviewer(agent).review(ReviewInput(diffs=diffs))
-    work = agent.requests[0].extra_folders[0]
+    harness = FakeHarness(scripted(prompt_info))
+    await CodeReviewer(harness).review(ReviewInput(diffs=diffs))
+    work = harness.requests[0].extra_folders[0]
     assert not work.exists()
 
 
-async def test_agent_error_cancels_and_propagates(diffs):
+async def test_harness_error_cancels_and_propagates(diffs):
     async def respond(req):
         if "batch-1" in req.prompt:
-            raise AgentError("batch crashed")
+            raise HarnessError("batch crashed")
         await asyncio.sleep(30)
         return "late"
 
     settings = ReviewSettings(files_per_batch=1)
-    reviewer = CodeReviewer(FakeAgent(respond), settings=settings)
-    with pytest.raises(AgentError, match="batch crashed"):
+    reviewer = CodeReviewer(FakeHarness(respond), settings=settings)
+    with pytest.raises(HarnessError, match="batch crashed"):
         await asyncio.wait_for(reviewer.review(ReviewInput(diffs=diffs)), 5)
 
 
-async def test_pass_agents_override(diffs, prompt_info):
-    default = FakeAgent(scripted(prompt_info))
-    other = FakeAgent(scripted(prompt_info))
-    reviewer = CodeReviewer(default, pass_agents={ReviewPass.CONSOLIDATION: other})
+async def test_pass_harnesses_override(diffs, prompt_info):
+    default = FakeHarness(scripted(prompt_info))
+    other = FakeHarness(scripted(prompt_info))
+    reviewer = CodeReviewer(default, pass_harnesses={ReviewPass.CONSOLIDATION: other})
     await reviewer.review(ReviewInput(diffs=diffs))
     assert len(other.requests) == 1
     assert pass_name(prompt_info, other.requests[0]) == "consolidation"
@@ -273,14 +273,16 @@ async def test_pass_agents_override(diffs, prompt_info):
 
 async def test_events_reach_on_event_labeled(diffs, prompt_info):
     seen: list[ReviewEvent] = []
-    agent = FakeAgent(scripted(prompt_info))
-    reviewer = CodeReviewer(agent)
+    harness = FakeHarness(scripted(prompt_info))
+    reviewer = CodeReviewer(harness)
     await reviewer.review(ReviewInput(diffs=diffs), on_event=seen.append)
     assert seen == []  # the fake emits no events of its own
-    from workflows.agent import TextEvent
+    from workflows.harness import TextEvent
 
-    agent = FakeAgent(scripted(prompt_info), events=[TextEvent(call_id="x", text="hi")])
-    await CodeReviewer(agent).review(ReviewInput(diffs=diffs), on_event=seen.append)
+    harness = FakeHarness(
+        scripted(prompt_info), events=[TextEvent(call_id="x", text="hi")]
+    )
+    await CodeReviewer(harness).review(ReviewInput(diffs=diffs), on_event=seen.append)
     labels = {(e.review_pass, e.batch, e.attempt) for e in seen}
     assert (ReviewPass.PER_FILE, 1, 1) in labels
     assert (ReviewPass.CONSOLIDATION, None, 1) in labels
@@ -312,13 +314,13 @@ async def test_codebase_mode_reads_the_repository(tmp_path, prompt_info):
     base = git("rev-parse", "HEAD")
     (repo / "a.py").write_text("one\ntwo\n")  # uncommitted
     (repo / "new.py").write_text("x\n")  # untracked
-    agent = FakeAgent(scripted(prompt_info))
+    harness = FakeHarness(scripted(prompt_info))
     review_input = ReviewInput(codebase=Codebase(path=repo, base_commit=base))
-    r = await CodeReviewer(agent).review(review_input)
+    r = await CodeReviewer(harness).review(review_input)
     assert {f.path for f in r.coverage.files} == {"a.py", "new.py"}
     passes = {p.review_pass: p.state for p in r.coverage.passes}
     assert passes[ReviewPass.CODE_PATTERNS] == "ran"
-    assert {q.working_folder for q in agent.requests} == {repo}
+    assert {q.working_folder for q in harness.requests} == {repo}
 
 
 @pytest.mark.parametrize("inside", [".review", "sub/.review", ""])
@@ -328,11 +330,11 @@ async def test_work_folder_inside_the_codebase_is_rejected(tmp_path, diffs, insi
     repo = tmp_path / "repo"
     repo.mkdir()
     work = repo / inside if inside else repo
-    agent = FakeAgent()
-    reviewer = CodeReviewer(agent, settings=ReviewSettings(work_folder=work))
+    harness = FakeHarness()
+    reviewer = CodeReviewer(harness, settings=ReviewSettings(work_folder=work))
     review_input = ReviewInput(
         diffs=diffs, codebase=Codebase(path=repo, base_commit="HEAD")
     )
     with pytest.raises(ReviewInputError, match="inside the codebase"):
         await reviewer.review(review_input)
-    assert agent.requests == [] and list(repo.iterdir()) == []
+    assert harness.requests == [] and list(repo.iterdir()) == []

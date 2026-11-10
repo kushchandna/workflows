@@ -49,7 +49,7 @@ class Repository(Protocol):
     def head(self) -> str: ...
 
     def commit_problem(self, last_checked: str) -> str | None:
-        """Why the agent's commits since ``last_checked`` are not acceptable, or ``None``."""
+        """Why the harness's commits since ``last_checked`` are not acceptable, or ``None``."""
         ...
 
     def dirty_paths(self) -> Dirty:

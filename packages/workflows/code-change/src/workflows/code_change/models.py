@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from workflows.agent import Event
+from workflows.harness import Event
 
 
 class ChangeStage(StrEnum):
@@ -31,7 +31,7 @@ class ChangeInput(BaseModel):
 class ChangeSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    agent_timeout_seconds: float | None = Field(default=1800, gt=0)
+    harness_timeout_seconds: float | None = Field(default=1800, gt=0)
     check_timeout_seconds: float | None = Field(default=1800, gt=0)
     check_output_chars: int = Field(default=20000, ge=0)
     work_folder: Path | None = None
@@ -81,7 +81,7 @@ class ChangeResult(BaseModel):
 
 
 class ChangeEvent(BaseModel):
-    """An agent event, labeled with the call it came from."""
+    """A harness event, labeled with the call it came from."""
 
     stage: ChangeStage
     attempt: int

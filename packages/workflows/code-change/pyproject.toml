@@ -3,10 +3,10 @@ name = "workflows-code-change"
 version = "0.1.0"
 requires-python = ">=3.11"
 readme = "README.md"
-dependencies = ["workflows-agent", "pydantic>=2"]
+dependencies = ["workflows-harness", "pydantic>=2"]
 
 [tool.uv.sources]
-workflows-agent = { workspace = true }
+workflows-harness = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

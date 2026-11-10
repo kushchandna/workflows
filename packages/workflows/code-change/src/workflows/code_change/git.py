@@ -9,7 +9,7 @@ from workflows.code_change.models import Commit
 from workflows.code_change.repo import Dirty
 
 _HEADS = "refs/heads/"
-# The reset must not depend on, or be stopped by, hooks the repository or the agent installed.
+# The reset must not depend on, or be stopped by, hooks the repository or the harness installed.
 _NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 # Written diffs must show the files as they are, whatever the user's git config says.
 _DIFF_FLAGS = [
@@ -163,14 +163,14 @@ class GitRepository:
         ]
 
     def reset(self) -> None:
-        # The index goes first. Otherwise a file the agent committed is deleted with its commit,
+        # The index goes first. Otherwise a file the harness committed is deleted with its commit,
         # even a git-ignored one that existed before the run. With the index at the base, such a
         # file is merely untracked, and the ignore rules restored below keep it.
         _run(self._path, "read-tree", self._base)
         if self._ref is None:
             _run(self._path, *_NO_HOOKS, "checkout", "-q", "-f", "--detach", self._base)
         else:
-            # -B also recreates the branch if the agent renamed or deleted it.
+            # -B also recreates the branch if the harness renamed or deleted it.
             _run(
                 self._path,
                 *_NO_HOOKS,

@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from workflows.agent import Event
+from workflows.harness import Event
 
 
 class ReviewPass(StrEnum):
@@ -104,12 +104,12 @@ class ReviewSettings(BaseModel):
     files_per_batch: int = Field(default=10, ge=1)
     directory_break_min_fill: float = Field(default=0.5, ge=0, le=1)
     max_parallel_calls: int = Field(default=4, ge=1)
-    agent_timeout_seconds: float | None = Field(default=1800, gt=0)
+    harness_timeout_seconds: float | None = Field(default=1800, gt=0)
     work_folder: Path | None = None
 
 
 class ReviewEvent(BaseModel):
-    """An agent event, labeled with the call it came from."""
+    """A harness event, labeled with the call it came from."""
 
     review_pass: ReviewPass
     batch: int | None

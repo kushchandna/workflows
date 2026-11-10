@@ -27,7 +27,7 @@ def line_values(prompt: str, label: str) -> list[str]:
 
 
 def test_per_file_prompt_lines():
-    out = "/w/agent-output/per-file/batch-1/attempt-1"
+    out = "/w/harness-output/per-file/batch-1/attempt-1"
     p = per_file_prompt(CTX, Path(out), [(1, "a.py"), (2, "b/c.py")], ["t1"])
     assert line_values(p, "Output folder") == [out]
     assert re.findall(r"^Slot (\d+): (.+)$", p, re.MULTILINE) == [
@@ -55,7 +55,7 @@ def test_per_file_prompt_lines():
     [ReviewPass.OVERALL, ReviewPass.TEST_COVERAGE, ReviewPass.CODE_PATTERNS],
 )
 def test_pass_prompts_have_result_file_and_no_slots(review_pass):
-    out = Path(f"/w/agent-output/{review_pass.value}/attempt-1")
+    out = Path(f"/w/harness-output/{review_pass.value}/attempt-1")
     p = pass_prompt(CTX, review_pass, out, ["a.py"], ["b.py"], [])
     assert line_values(p, "Result file") == [f"{out}/result.json"]
     assert line_values(p, "Output folder") == [str(out)]
@@ -71,7 +71,7 @@ def test_overall_prompt_lists_unreviewed_files():
 
 
 def test_consolidation_prompt():
-    out = Path("/w/agent-output/consolidation/attempt-1")
+    out = Path("/w/harness-output/consolidation/attempt-1")
     p = consolidation_prompt(CTX, out, ["t3"], "files: 1 unreviewed")
     assert "files: 1 unreviewed" in p and "/w/review-passes" in p
     assert line_values(p, "Threads you may act on") == ["t3"]

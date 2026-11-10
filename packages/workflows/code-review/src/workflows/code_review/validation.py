@@ -1,4 +1,4 @@
-"""Checking agent results: which comments and thread actions are usable."""
+"""Checking harness results: which comments and thread actions are usable."""
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath

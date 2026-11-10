@@ -3,15 +3,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from workflows.agent import Agent, AgentRequest, Event
 from workflows.code_review.models import ReviewEvent, ReviewPass
+from workflows.harness import Event, Harness, HarnessRequest
 
 
 def output_folder(
     work: Path, review_pass: ReviewPass, batch: int | None, attempt: int
 ) -> Path:
-    """Where an agent writes its raw files: ``agent-output/<pass>/[batch-<k>/]attempt-<a>``."""
-    folder = work / "agent-output" / review_pass.value
+    """Where a harness writes its raw files: ``harness-output/<pass>/[batch-<k>/]attempt-<a>``."""
+    folder = work / "harness-output" / review_pass.value
     if batch is not None:
         folder = folder / f"batch-{batch}"
     return folder / f"attempt-{attempt}"
@@ -19,9 +19,9 @@ def output_folder(
 
 @dataclass
 class CallRunner:
-    """Runs agent calls: picks the pass's agent, limits parallelism, labels events."""
+    """Runs harness calls: picks the pass's harness, limits parallelism, labels events."""
 
-    agents: Callable[[ReviewPass], Agent]
+    harnesses: Callable[[ReviewPass], Harness]
     working_folder: Path
     work: Path
     timeout_seconds: float | None
@@ -37,7 +37,7 @@ class CallRunner:
         prompt: str,
     ) -> None:
         folder.mkdir(parents=True, exist_ok=True)
-        request = AgentRequest(
+        request = HarnessRequest(
             prompt=prompt,
             working_folder=self.working_folder,
             extra_folders=[self.work],
@@ -56,4 +56,4 @@ class CallRunner:
                 )
 
         async with self.semaphore:
-            await self.agents(review_pass).run(request, on_event=forward)
+            await self.harnesses(review_pass).run(request, on_event=forward)

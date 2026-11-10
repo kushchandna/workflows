@@ -2,19 +2,19 @@
 name = "workflows-workspace"
 version = "0"
 requires-python = ">=3.11"
-dependencies = ["workflows-agent", "workflows-agent-claude-code", "workflows-code-review", "workflows-code-change"]
+dependencies = ["workflows-harness", "workflows-harness-claude-code", "workflows-code-review", "workflows-code-change"]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-workflows-agent = { workspace = true }
-workflows-agent-claude-code = { workspace = true }
+workflows-harness = { workspace = true }
+workflows-harness-claude-code = { workspace = true }
 workflows-code-review = { workspace = true }
 workflows-code-change = { workspace = true }
 
 [tool.uv.workspace]
-members = ["packages/agents/*", "packages/workflows/*"]
+members = ["packages/harnesses/*", "packages/workflows/*"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "pyright>=1.1.380"]

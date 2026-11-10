@@ -1,4 +1,4 @@
-"""Schemas for the JSON files exchanged with agents."""
+"""Schemas for the JSON files exchanged with harnesses."""
 
 from typing import Literal
 

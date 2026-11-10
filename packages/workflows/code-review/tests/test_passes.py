@@ -3,14 +3,14 @@ import re
 
 import pytest
 
-from workflows.agent import AgentError, TextEvent
-from workflows.agent.testing import FakeAgent
 from workflows.code_review import ReviewEvent, ReviewPass
 from workflows.code_review.changes import ChangedFile
 from workflows.code_review.formats import PassResult
 from workflows.code_review.passes import run_pass, run_per_file_batch
 from workflows.code_review.prompts import PromptContext
 from workflows.code_review.validation import Scope
+from workflows.harness import HarnessError, TextEvent
+from workflows.harness.testing import FakeHarness
 
 
 def files(*paths):
@@ -59,81 +59,83 @@ BAD_COMMENT = {"target": {"type": "file", "path": "zzz.py"}, "body": "hm"}
 
 
 async def test_all_valid_needs_one_call(tmp_path, prompt_info, runner_for):
-    agent = FakeAgent(per_file_writer(prompt_info, lambda p, a: good(p)))
+    harness = FakeHarness(per_file_writer(prompt_info, lambda p, a: good(p)))
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ctx(tmp_path),
         1,
         files("a.py", "b.py"),
         scope({"a.py", "b.py"}),
     )
-    assert len(agent.requests) == 1
+    assert len(harness.requests) == 1
     assert set(out.checked) == {"a.py", "b.py"} and out.unreviewed == []
     assert (
-        tmp_path / "agent-output" / "per-file" / "batch-1" / "attempt-1" / "1.json"
+        tmp_path / "harness-output" / "per-file" / "batch-1" / "attempt-1" / "1.json"
     ).exists()
 
 
 async def test_retry_only_failed_files_and_mark_unreviewed(
     tmp_path, prompt_info, runner_for
 ):
-    agent = FakeAgent(
+    harness = FakeHarness(
         per_file_writer(prompt_info, lambda p, a: good(p) if p == "a.py" else None)
     )
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ctx(tmp_path),
         1,
         files("a.py", "b.py"),
         scope({"a.py", "b.py"}),
     )
-    assert len(agent.requests) == 2
-    assert prompt_info.slots(agent.requests[1].prompt) == [(1, "b.py")]
-    assert prompt_info.output_folder(agent.requests[1].prompt).name == "attempt-2"
+    assert len(harness.requests) == 2
+    assert prompt_info.slots(harness.requests[1].prompt) == [(1, "b.py")]
+    assert prompt_info.output_folder(harness.requests[1].prompt).name == "attempt-2"
     assert out.unreviewed == ["b.py"] and set(out.checked) == {"a.py"}
 
 
 async def test_wrong_path_in_result_is_unusable(tmp_path, prompt_info, runner_for):
-    agent = FakeAgent(
+    harness = FakeHarness(
         per_file_writer(prompt_info, lambda p, a: good("someone_else.py"))
     )
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
+        runner_for(harness, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
     )
     assert out.unreviewed == ["a.py"] and out.checked == {}
 
 
 async def test_invalid_comment_retried_then_moved(tmp_path, prompt_info, runner_for):
-    agent = FakeAgent(per_file_writer(prompt_info, lambda p, a: good(p, [BAD_COMMENT])))
-    out = await run_per_file_batch(
-        runner_for(agent, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
+    harness = FakeHarness(
+        per_file_writer(prompt_info, lambda p, a: good(p, [BAD_COMMENT]))
     )
-    assert len(agent.requests) == 2
+    out = await run_per_file_batch(
+        runner_for(harness, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
+    )
+    assert len(harness.requests) == 2
     comment = out.checked["a.py"].comments[0]
     assert comment.target.type == "change" and comment.body == "zzz.py: hm"
 
 
 async def test_retry_fixes_the_comment(tmp_path, prompt_info, runner_for):
     fixed = {"target": {"type": "file", "path": "a.py"}, "body": "hm"}
-    agent = FakeAgent(
+    harness = FakeHarness(
         per_file_writer(
             prompt_info, lambda p, a: good(p, [BAD_COMMENT if a == 1 else fixed])
         )
     )
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
+        runner_for(harness, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
     )
     assert out.checked["a.py"].comments[0].target.type == "file"
 
 
 async def test_retry_unusable_falls_back_to_first(tmp_path, prompt_info, runner_for):
-    agent = FakeAgent(
+    harness = FakeHarness(
         per_file_writer(
             prompt_info, lambda p, a: good(p, [BAD_COMMENT]) if a == 1 else "not json"
         )
     )
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
+        runner_for(harness, tmp_path), ctx(tmp_path), 1, files("a.py"), scope({"a.py"})
     )
     assert "a.py" in out.checked and out.unreviewed == []
     assert out.checked["a.py"].comments[0].target.type == "change"
@@ -141,13 +143,13 @@ async def test_retry_unusable_falls_back_to_first(tmp_path, prompt_info, runner_
 
 async def test_dropped_thread_actions_are_reported(tmp_path, prompt_info, runner_for):
     action = {"thread_id": "t9", "action": "resolve"}
-    agent = FakeAgent(
+    harness = FakeHarness(
         per_file_writer(
             prompt_info, lambda p, a: {**good(p), "thread_actions": [action]}
         )
     )
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ctx(tmp_path),
         1,
         files("a.py"),
@@ -161,12 +163,12 @@ async def test_dropped_thread_actions_are_reported(tmp_path, prompt_info, runner
 
 async def test_events_are_labeled(tmp_path, prompt_info, runner_for):
     seen: list[ReviewEvent] = []
-    agent = FakeAgent(
+    harness = FakeHarness(
         per_file_writer(prompt_info, lambda p, a: good(p)),
         events=[TextEvent(call_id="x", text="hi")],
     )
     await run_per_file_batch(
-        runner_for(agent, tmp_path, seen.append),
+        runner_for(harness, tmp_path, seen.append),
         ctx(tmp_path),
         3,
         files("a.py"),
@@ -194,67 +196,69 @@ def result_writer(prompt_info, make):  # make(attempt) -> dict | str | None
 
 
 async def test_run_pass_failed_after_retry(tmp_path, runner_for):
-    agent = FakeAgent(lambda req: "wrote nothing")
+    harness = FakeHarness(lambda req: "wrote nothing")
     out = await run_pass(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ReviewPass.TEST_COVERAGE,
         pass_prompt_for,
         scope({"a.py"}),
         PassResult,
     )
-    assert out.result is None and len(agent.requests) == 2
+    assert out.result is None and len(harness.requests) == 2
 
 
 async def test_run_pass_valid_result_needs_one_call(tmp_path, prompt_info, runner_for):
     body = {"comments": [{"target": {"type": "change"}, "body": "ok"}]}
-    agent = FakeAgent(result_writer(prompt_info, lambda a: body))
+    harness = FakeHarness(result_writer(prompt_info, lambda a: body))
     out = await run_pass(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ReviewPass.OVERALL,
         pass_prompt_for,
         scope({"a.py"}),
         PassResult,
     )
-    assert len(agent.requests) == 1 and out.result is not None
+    assert len(harness.requests) == 1 and out.result is not None
     assert [c.body for c in out.result.comments] == ["ok"]
 
 
 async def test_run_pass_repairs_invalid_comments_after_retry(
     tmp_path, prompt_info, runner_for
 ):
-    agent = FakeAgent(result_writer(prompt_info, lambda a: {"comments": [BAD_COMMENT]}))
+    harness = FakeHarness(
+        result_writer(prompt_info, lambda a: {"comments": [BAD_COMMENT]})
+    )
     out = await run_pass(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ReviewPass.OVERALL,
         pass_prompt_for,
         scope({"a.py"}),
         PassResult,
     )
-    assert len(agent.requests) == 2 and out.result is not None
+    assert len(harness.requests) == 2 and out.result is not None
     assert out.result.comments[0].body == "zzz.py: hm"
 
 
 async def test_run_pass_second_attempt_can_rescue(tmp_path, prompt_info, runner_for):
-    agent = FakeAgent(
+    harness = FakeHarness(
         result_writer(prompt_info, lambda a: None if a == 1 else {"comments": []})
     )
     out = await run_pass(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ReviewPass.CODE_PATTERNS,
         pass_prompt_for,
         scope({"a.py"}),
         PassResult,
     )
-    assert out.result is not None and len(agent.requests) == 2
+    assert out.result is not None and len(harness.requests) == 2
 
 
-async def test_agent_error_propagates(tmp_path, runner_for):
+async def test_harness_error_propagates(tmp_path, runner_for):
     def boom(req):
-        raise AgentError("crashed")
+        raise HarnessError("crashed")
 
-    with pytest.raises(AgentError):
+    with pytest.raises(HarnessError):
         await run_pass(
-            runner_for(FakeAgent(boom), tmp_path),
+            runner_for(FakeHarness(boom), tmp_path),
             ReviewPass.OVERALL,
             lambda folder: f"Output folder: {folder}",
             scope({"a.py"}),
@@ -262,13 +266,13 @@ async def test_agent_error_propagates(tmp_path, runner_for):
         )
 
 
-async def test_agent_per_pass(tmp_path, prompt_info, runner_for):
-    default = FakeAgent(result_writer(prompt_info, lambda a: {"comments": []}))
-    other = FakeAgent(result_writer(prompt_info, lambda a: {"comments": []}))
+async def test_harness_per_pass(tmp_path, prompt_info, runner_for):
+    default = FakeHarness(result_writer(prompt_info, lambda a: {"comments": []}))
+    other = FakeHarness(result_writer(prompt_info, lambda a: {"comments": []}))
     runner = runner_for(
         default,
         tmp_path,
-        agents=lambda p: other if p == ReviewPass.OVERALL else default,
+        harnesses=lambda p: other if p == ReviewPass.OVERALL else default,
     )
     await run_pass(
         runner, ReviewPass.OVERALL, pass_prompt_for, scope({"a.py"}), PassResult
@@ -284,11 +288,11 @@ async def test_request_wiring(tmp_path, prompt_info):
 
     from workflows.code_review.calls import CallRunner
 
-    agent = FakeAgent(result_writer(prompt_info, lambda a: {"comments": []}))
+    harness = FakeHarness(result_writer(prompt_info, lambda a: {"comments": []}))
     code = tmp_path / "code"
     code.mkdir()
     runner = CallRunner(
-        agents=lambda p: agent,
+        harnesses=lambda p: harness,
         working_folder=code,
         work=tmp_path,
         timeout_seconds=12.5,
@@ -298,7 +302,7 @@ async def test_request_wiring(tmp_path, prompt_info):
     await run_pass(
         runner, ReviewPass.OVERALL, pass_prompt_for, scope({"a.py"}), PassResult
     )
-    req = agent.requests[0]
+    req = harness.requests[0]
     assert (req.working_folder, req.extra_folders, req.timeout_seconds) == (
         code,
         [tmp_path],
@@ -327,9 +331,9 @@ async def test_retry_does_not_offer_threads_already_answered(
             return good(path, [reply])
         return good(path, [duplicate]) if attempt == 2 else None
 
-    agent = FakeAgent(per_file_writer(prompt_info, make))
+    harness = FakeHarness(per_file_writer(prompt_info, make))
     out = await run_per_file_batch(
-        runner_for(agent, tmp_path),
+        runner_for(harness, tmp_path),
         ctx(tmp_path),
         1,
         files("a.py", "b.py"),
@@ -337,7 +341,7 @@ async def test_retry_does_not_offer_threads_already_answered(
     )
     offered = [
         re.findall(r"^Threads you may act on: (.+)$", r.prompt, re.MULTILINE)
-        for r in agent.requests
+        for r in harness.requests
     ]
     assert offered == [["t1, t2"], ["t2"]]
     assert [c.reply_to for c in out.checked["a.py"].comments] == ["t1"]

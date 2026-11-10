@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from workflows.code_review import ReviewEvent, ReviewPass
-from workflows.code_review.calls import CallRunner
+from workflows.code_review import ReviewEvent
+from workflows.code_review.calls import CallRunner, Step
 from workflows.harness import Harness
 
 
@@ -40,10 +40,10 @@ def runner_for() -> Callable[..., CallRunner]:
         harness: Harness,
         work: Path,
         on_event: Callable[[ReviewEvent], None] | None = None,
-        harnesses: Callable[[ReviewPass], Harness] | None = None,
+        harnesses: Callable[[Step], Harness] | None = None,
     ) -> CallRunner:
         return CallRunner(
-            harnesses=harnesses or (lambda review_pass: harness),
+            harnesses=harnesses or (lambda step: harness),
             working_folder=work,
             work=work,
             timeout_seconds=None,

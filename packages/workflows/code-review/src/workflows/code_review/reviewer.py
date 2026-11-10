@@ -7,51 +7,58 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from workflows.code_review.agents import resolve_agents
 from workflows.code_review.batching import make_batches
-from workflows.code_review.calls import CallRunner
+from workflows.code_review.calls import CallRunner, Step
 from workflows.code_review.changes import changes_from_diffs
 from workflows.code_review.errors import ReviewInputError
 from workflows.code_review.formats import (
     ConsolidationResult,
-    PassResult,
     PerFileResult,
+    StepResult,
     Thread,
 )
 from workflows.code_review.gitchanges import changes_from_git, check_codebase
 from workflows.code_review.models import (
+    AgentCoverage,
     Codebase,
     Comment,
     Coverage,
     DroppedThreadAction,
     FileCoverage,
-    PassCoverage,
+    ReviewAgent,
     ReviewEvent,
     ReviewInput,
-    ReviewPass,
     ReviewResult,
     ReviewSettings,
+    ReviewStage,
+    StageCoverage,
     ThreadAction,
-)
-from workflows.code_review.passes import (
-    FileOutcome,
-    PassOutcome,
-    run_pass,
-    run_per_file_batch,
 )
 from workflows.code_review.prompts import (
     PromptContext,
+    agent_prompt,
     consolidation_prompt,
-    pass_prompt,
+    overall_prompt,
+)
+from workflows.code_review.steps import (
+    FileOutcome,
+    StepOutcome,
+    run_per_file_batch,
+    run_step,
 )
 from workflows.code_review.threads import load_threads, route_threads
 from workflows.code_review.validation import Scope
 from workflows.harness import Harness, HarnessError
 
 NO_RESULT = "no valid result after retry"
+OVERALL = Step(stage=ReviewStage.OVERALL)
+CONSOLIDATION = Step(stage=ReviewStage.CONSOLIDATION)
 
 
 class CodeReviewer:
-    """Reviews a change in several harness passes and returns a status, comments and coverage.
+    """Reviews a change in fixed stages plus review agents, and returns a status, comments
+    and coverage.
 
     The end product supplies the harnesses; this class never chooses a model.
     """
@@ -59,12 +66,22 @@ class CodeReviewer:
     def __init__(
         self,
         default_harness: Harness,
-        pass_harnesses: Mapping[ReviewPass, Harness] | None = None,
+        stage_harnesses: Mapping[ReviewStage, Harness] | None = None,
+        agent_harnesses: Mapping[str, Harness] | None = None,
         settings: ReviewSettings | None = None,
     ) -> None:
         self._default_harness = default_harness
-        self._pass_harnesses = dict(pass_harnesses or {})
+        self._stage_harnesses = dict(stage_harnesses or {})
+        self._agent_harnesses = dict(agent_harnesses or {})
         self._settings = settings or ReviewSettings()
+
+    def _harness(self, step: Step) -> Harness:
+        found = (
+            self._stage_harnesses.get(step.stage)
+            if step.stage
+            else self._agent_harnesses.get(step.agent or "")
+        )
+        return found if found is not None else self._default_harness
 
     async def review(
         self,
@@ -73,10 +90,13 @@ class CodeReviewer:
     ) -> ReviewResult:
         if review_input.codebase is None and review_input.diffs is None:
             raise ReviewInputError("give a codebase, a diffs folder, or both")
+        agents = resolve_agents(review_input.agents)
         configured = self._settings.work_folder
         if configured is None:
             with tempfile.TemporaryDirectory(prefix="code-review-") as tmp:
-                return await self._review(review_input, Path(tmp).resolve(), on_event)
+                return await self._review(
+                    review_input, agents, Path(tmp).resolve(), on_event
+                )
         configured = configured.resolve()
         if review_input.codebase is not None and configured.is_relative_to(
             review_input.codebase.path.resolve()
@@ -92,11 +112,12 @@ class CodeReviewer:
                 f"work folder must be empty or missing: {configured}"
             )
         configured.mkdir(parents=True, exist_ok=True)
-        return await self._review(review_input, configured, on_event)
+        return await self._review(review_input, agents, configured, on_event)
 
     async def _review(
         self,
         review_input: ReviewInput,
+        agents: list[ReviewAgent],
         work: Path,
         on_event: Callable[[ReviewEvent], None] | None,
     ) -> ReviewResult:
@@ -129,16 +150,22 @@ class CodeReviewer:
                 status="approved",
                 coverage=Coverage(
                     files=sorted(file_coverage.values(), key=lambda c: c.path),
-                    passes=[
-                        PassCoverage(review_pass=p, state="skipped", reason=reason)
-                        for p in ReviewPass
+                    stages=[
+                        StageCoverage(stage=s, state="skipped", reason=reason)
+                        for s in ReviewStage
+                    ],
+                    agents=[
+                        AgentCoverage(agent=a.name, state="skipped", reason=reason)
+                        for a in agents
                     ],
                 ),
             )
 
         settings = self._settings
+        codebase_path = codebase.path if codebase else None
+        running = [a for a in agents if codebase_path or not a.needs_codebase]
         runner = CallRunner(
-            harnesses=lambda p: self._pass_harnesses.get(p, self._default_harness),
+            harnesses=self._harness,
             working_folder=codebase.path if codebase else work,
             work=work,
             timeout_seconds=settings.harness_timeout_seconds,
@@ -152,14 +179,14 @@ class CodeReviewer:
             instructions=review_input.instructions,
             change_author=review_input.change_author,
             reviewer_name=review_input.reviewer_name,
+            agents=tuple(a.name for a in running),
         )
-        codebase_path = codebase.path if codebase else None
         changed = sorted(f.path for f in reviewable)
         changed_paths = frozenset().union(*(f.paths for f in all_files))
         batches = make_batches(reviewable, settings)
         routing = route_threads(threads, batches)
 
-        # First wave: every per-file batch, test coverage and code patterns together.
+        # First wave: every per-file batch and every review agent together.
         jobs: list[Awaitable[Any]] = [
             run_per_file_batch(
                 runner,
@@ -176,25 +203,20 @@ class CodeReviewer:
             for k, batch in enumerate(batches, start=1)
         ]
         no_threads = Scope(changed_paths, None, codebase_path, frozenset())
-        side_passes = [ReviewPass.TEST_COVERAGE]
-        if codebase_path is not None:
-            side_passes.append(ReviewPass.CODE_PATTERNS)
-        for review_pass in side_passes:
+        for agent in running:
             jobs.append(
-                run_pass(
+                run_step(
                     runner,
-                    review_pass,
-                    lambda folder, rp=review_pass: pass_prompt(
-                        ctx, rp, folder, changed, [], []
-                    ),
+                    Step(agent=agent.name),
+                    lambda folder, a=agent: agent_prompt(ctx, a, folder, changed),
                     no_threads,
-                    PassResult,
+                    StepResult,
                 )
             )
         outcomes = await _gather(jobs)
         file_outcomes: list[FileOutcome] = outcomes[: len(batches)]
-        side_outcomes: dict[ReviewPass, PassOutcome] = dict(
-            zip(side_passes, outcomes[len(batches) :], strict=True)
+        agent_outcomes: dict[str, StepOutcome] = dict(
+            zip((a.name for a in running), outcomes[len(batches) :], strict=True)
         )
 
         checked_files: dict[str, PerFileResult] = {}
@@ -206,49 +228,54 @@ class CodeReviewer:
             dropped += outcome.dropped
         unreviewed.sort()
         for path, result in checked_files.items():
-            _write(work / "review-passes" / "per-file" / f"{path}.json", result)
+            _write(work / "results" / "per-file" / f"{path}.json", result)
             file_coverage[path] = FileCoverage(path=path, state="reviewed")
         for path in unreviewed:
             file_coverage[path] = FileCoverage(
                 path=path, state="unreviewed", reason=NO_RESULT
             )
 
-        pass_coverage: dict[ReviewPass, PassCoverage] = {
-            ReviewPass.PER_FILE: PassCoverage(
-                review_pass=ReviewPass.PER_FILE, state="ran"
-            )
+        stage_coverage: dict[ReviewStage, StageCoverage] = {
+            ReviewStage.PER_FILE: StageCoverage(stage=ReviewStage.PER_FILE, state="ran")
         }
-        if codebase_path is None:
-            pass_coverage[ReviewPass.CODE_PATTERNS] = PassCoverage(
-                review_pass=ReviewPass.CODE_PATTERNS,
-                state="skipped",
-                reason="no codebase",
-            )
-        earlier: list[PerFileResult | PassResult] = list(checked_files.values())
-        for review_pass, outcome in side_outcomes.items():
+        agent_coverage: list[AgentCoverage] = []
+        earlier: list[PerFileResult | StepResult] = list(checked_files.values())
+        for agent in agents:
+            outcome = agent_outcomes.get(agent.name)
+            if outcome is None:
+                agent_coverage.append(
+                    AgentCoverage(
+                        agent=agent.name, state="skipped", reason="no codebase"
+                    )
+                )
+                continue
             dropped += outcome.dropped
-            pass_coverage[review_pass] = _pass_coverage(review_pass, outcome)
-            _record(work, review_pass, outcome)
+            failed = outcome.result is None
+            agent_coverage.append(
+                AgentCoverage(
+                    agent=agent.name,
+                    state="failed" if failed else "ran",
+                    reason=NO_RESULT if failed else None,
+                )
+            )
+            _record(work, Step(agent=agent.name), outcome)
 
         # Overall: needs the per-file results.
-        overall = await run_pass(
+        overall = await run_step(
             runner,
-            ReviewPass.OVERALL,
-            lambda folder: pass_prompt(
-                ctx,
-                ReviewPass.OVERALL,
-                folder,
-                changed,
-                unreviewed,
-                sorted(routing.overall),
+            OVERALL,
+            lambda folder: overall_prompt(
+                ctx, folder, changed, unreviewed, sorted(routing.overall)
             ),
             Scope(changed_paths, None, codebase_path, routing.overall),
-            PassResult,
+            StepResult,
         )
         dropped += overall.dropped
-        pass_coverage[ReviewPass.OVERALL] = _pass_coverage(ReviewPass.OVERALL, overall)
-        _record(work, ReviewPass.OVERALL, overall)
-        if isinstance(overall.result, PassResult):
+        stage_coverage[ReviewStage.OVERALL] = _stage_coverage(
+            ReviewStage.OVERALL, overall
+        )
+        _record(work, OVERALL, overall)
+        if isinstance(overall.result, StepResult):
             earlier.append(overall.result)
 
         # Consolidation: last. Threads nobody replied to or acted on are still open to it.
@@ -257,11 +284,11 @@ class CodeReviewer:
         }
         all_thread_ids = frozenset(t.id for t in threads)
         coverage_text = _coverage_text(
-            list(file_coverage.values()), pass_coverage.values()
+            list(file_coverage.values()), stage_coverage.values(), agent_coverage
         )
-        consolidation = await run_pass(
+        consolidation = await run_step(
             runner,
-            ReviewPass.CONSOLIDATION,
+            CONSOLIDATION,
             lambda folder: consolidation_prompt(
                 ctx, folder, sorted(all_thread_ids - answered), coverage_text
             ),
@@ -272,10 +299,10 @@ class CodeReviewer:
         if not isinstance(final, ConsolidationResult):
             raise HarnessError("consolidation produced no usable result")
         dropped += consolidation.dropped
-        pass_coverage[ReviewPass.CONSOLIDATION] = PassCoverage(
-            review_pass=ReviewPass.CONSOLIDATION, state="ran"
+        stage_coverage[ReviewStage.CONSOLIDATION] = StageCoverage(
+            stage=ReviewStage.CONSOLIDATION, state="ran"
         )
-        _record(work, ReviewPass.CONSOLIDATION, consolidation)
+        _record(work, CONSOLIDATION, consolidation)
 
         by_id = {t.id: t for t in threads}
         earlier_replies = [c for r in earlier for c in r.comments if c.reply_to]
@@ -289,7 +316,7 @@ class CodeReviewer:
         ]
         thread_actions += final.thread_actions
         degraded = bool(unreviewed) or any(
-            c.state == "failed" for c in pass_coverage.values()
+            c.state == "failed" for c in [*stage_coverage.values(), *agent_coverage]
         )
         return ReviewResult(
             status="inconclusive" if degraded else final.status,
@@ -297,7 +324,8 @@ class CodeReviewer:
             thread_actions=thread_actions,
             coverage=Coverage(
                 files=sorted(file_coverage.values(), key=lambda c: c.path),
-                passes=[pass_coverage[p] for p in ReviewPass if p in pass_coverage],
+                stages=[stage_coverage[s] for s in ReviewStage if s in stage_coverage],
+                agents=agent_coverage,
                 dropped_thread_actions=dropped,
             ),
         )
@@ -326,17 +354,15 @@ async def _gather(jobs: list[Awaitable[Any]]) -> list[Any]:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def _pass_coverage(review_pass: ReviewPass, outcome: PassOutcome) -> PassCoverage:
+def _stage_coverage(stage: ReviewStage, outcome: StepOutcome) -> StageCoverage:
     if outcome.result is None:
-        return PassCoverage(review_pass=review_pass, state="failed", reason=NO_RESULT)
-    return PassCoverage(review_pass=review_pass, state="ran")
+        return StageCoverage(stage=stage, state="failed", reason=NO_RESULT)
+    return StageCoverage(stage=stage, state="ran")
 
 
-def _record(work: Path, review_pass: ReviewPass, outcome: PassOutcome) -> None:
+def _record(work: Path, step: Step, outcome: StepOutcome) -> None:
     if outcome.result is not None:
-        _write(
-            work / "review-passes" / review_pass.value / "result.json", outcome.result
-        )
+        _write(work / "results" / step.folder / "result.json", outcome.result)
 
 
 def _write(path: Path, data: BaseModel | list[Any]) -> None:
@@ -355,7 +381,11 @@ def _with_thread_target(comment: Comment, threads: dict[str, Thread]) -> Comment
     return comment.model_copy(update={"target": thread.target}) if thread else comment
 
 
-def _coverage_text(files: list[FileCoverage], passes: Iterable[PassCoverage]) -> str:
+def _coverage_text(
+    files: list[FileCoverage],
+    stages: Iterable[StageCoverage],
+    agents: list[AgentCoverage],
+) -> str:
     """The coverage so far, as text for the consolidation prompt."""
     unreviewed = sorted(f.path for f in files if f.state == "unreviewed")
     skipped = sorted(f.path for f in files if f.state == "skipped")
@@ -364,7 +394,10 @@ def _coverage_text(files: list[FileCoverage], passes: Iterable[PassCoverage]) ->
         f"- unreviewed files (no usable per-file result): {', '.join(unreviewed) or 'none'}",
         f"- skipped files (binary): {', '.join(skipped) or 'none'}",
     ]
-    for p in passes:
-        detail = f" ({p.reason})" if p.reason else ""
-        lines.append(f"- {p.review_pass.value}: {p.state}{detail}")
+    for s in stages:
+        detail = f" ({s.reason})" if s.reason else ""
+        lines.append(f"- {s.stage.value}: {s.state}{detail}")
+    for a in agents:
+        detail = f" ({a.reason})" if a.reason else ""
+        lines.append(f"- review agent {a.agent}: {a.state}{detail}")
     return "\n".join(lines)

@@ -11,7 +11,7 @@ $instructions
 - Codebase, with the change applied: $codebase
 - The change as diffs, one per changed file: $diffs_dir/<path>.diff
 - All existing discussion threads (JSON): $threads_file
-- Checked results of the passes that already finished: $passes_dir
+- Checked results of the stages and agents that already finished: $results_dir
 
 Read as much of the codebase as you need. Never run the code or its tests, and never
 change any file in the codebase.

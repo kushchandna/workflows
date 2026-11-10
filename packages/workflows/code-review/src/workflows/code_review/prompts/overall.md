@@ -1,7 +1,7 @@
 # Overall review
 
-Other passes already reviewed each changed file one by one. Their checked results are in
-$passes_dir/per-file/<path>.json, one file per changed file with the same path as its diff.
+The per-file review already covered each changed file one by one. Its checked results are in
+$results_dir/per-file/<path>.json, one file per changed file with the same path as its diff.
 Each holds a summary of the file's change and its comments.
 
 Your job:
@@ -10,7 +10,7 @@ Your job:
 - consistency across files;
 - anything missing, for example an API that changed while its callers did not.
 
-Not your job: line-level bugs, which the per-file pass covers. Do not repeat comments that
+Not your job: line-level bugs, which the per-file review covers. Do not repeat comments that
 are already in the per-file results.
 
 Comments may also point at unchanged files, for example a caller that was not updated.

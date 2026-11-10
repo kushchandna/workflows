@@ -26,7 +26,7 @@ class PerFileResult(BaseModel):
     thread_actions: list[ThreadAction] = []
 
 
-class PassResult(BaseModel):
+class StepResult(BaseModel):
     comments: list[Comment] = []
     thread_actions: list[ThreadAction] = []
 

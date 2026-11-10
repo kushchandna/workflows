@@ -695,9 +695,7 @@ async def test_a_prepared_pull_request_can_be_reviewed(tmp_path, remote, monkeyp
     result = await CodeReviewer(harness).review(review_input)
     assert result.status == "approved"
     assert [(f.path, f.state) for f in result.coverage.files] == [("a.py", "reviewed")]
-    assert {p.review_pass.value: p.state for p in result.coverage.passes}[
-        "code-patterns"
-    ] == "ran"
+    assert {a.agent: a.state for a in result.coverage.agents}["code-patterns"] == "ran"
     assert {r.working_folder for r in harness.requests} == {out.resolve() / "code"}
 
 

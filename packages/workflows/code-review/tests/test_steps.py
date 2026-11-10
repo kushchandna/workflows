@@ -3,14 +3,19 @@ import re
 
 import pytest
 
-from workflows.code_review import ReviewEvent, ReviewPass
+from workflows.code_review import ReviewEvent, ReviewStage
+from workflows.code_review.calls import Step
 from workflows.code_review.changes import ChangedFile
-from workflows.code_review.formats import PassResult
-from workflows.code_review.passes import run_pass, run_per_file_batch
+from workflows.code_review.formats import StepResult
 from workflows.code_review.prompts import PromptContext
+from workflows.code_review.steps import run_per_file_batch, run_step
 from workflows.code_review.validation import Scope
 from workflows.harness import HarnessError, TextEvent
 from workflows.harness.testing import FakeHarness
+
+OVERALL = Step(stage=ReviewStage.OVERALL)
+TEST_COVERAGE = Step(agent="test-coverage")
+CODE_PATTERNS = Step(agent="code-patterns")
 
 
 def files(*paths):
@@ -156,8 +161,8 @@ async def test_dropped_thread_actions_are_reported(tmp_path, prompt_info, runner
         scope({"a.py"}, ["t1"]),
     )
     assert out.checked["a.py"].thread_actions == []
-    assert [(d.thread_id, d.review_pass) for d in out.dropped] == [
-        ("t9", ReviewPass.PER_FILE)
+    assert [(d.thread_id, d.stage, d.agent) for d in out.dropped] == [
+        ("t9", ReviewStage.PER_FILE, None)
     ]
 
 
@@ -174,12 +179,12 @@ async def test_events_are_labeled(tmp_path, prompt_info, runner_for):
         files("a.py"),
         scope({"a.py"}),
     )
-    assert [(e.review_pass, e.batch, e.attempt) for e in seen] == [
-        (ReviewPass.PER_FILE, 3, 1)
+    assert [(e.stage, e.agent, e.batch, e.attempt) for e in seen] == [
+        (ReviewStage.PER_FILE, None, 3, 1)
     ]
 
 
-def pass_prompt_for(folder):
+def step_prompt_for(folder):
     return f"Output folder: {folder}\nResult file: {folder}/result.json"
 
 
@@ -195,59 +200,59 @@ def result_writer(prompt_info, make):  # make(attempt) -> dict | str | None
     return respond
 
 
-async def test_run_pass_failed_after_retry(tmp_path, runner_for):
+async def test_run_step_failed_after_retry(tmp_path, runner_for):
     harness = FakeHarness(lambda req: "wrote nothing")
-    out = await run_pass(
+    out = await run_step(
         runner_for(harness, tmp_path),
-        ReviewPass.TEST_COVERAGE,
-        pass_prompt_for,
+        TEST_COVERAGE,
+        step_prompt_for,
         scope({"a.py"}),
-        PassResult,
+        StepResult,
     )
     assert out.result is None and len(harness.requests) == 2
 
 
-async def test_run_pass_valid_result_needs_one_call(tmp_path, prompt_info, runner_for):
+async def test_run_step_valid_result_needs_one_call(tmp_path, prompt_info, runner_for):
     body = {"comments": [{"target": {"type": "change"}, "body": "ok"}]}
     harness = FakeHarness(result_writer(prompt_info, lambda a: body))
-    out = await run_pass(
+    out = await run_step(
         runner_for(harness, tmp_path),
-        ReviewPass.OVERALL,
-        pass_prompt_for,
+        OVERALL,
+        step_prompt_for,
         scope({"a.py"}),
-        PassResult,
+        StepResult,
     )
     assert len(harness.requests) == 1 and out.result is not None
     assert [c.body for c in out.result.comments] == ["ok"]
 
 
-async def test_run_pass_repairs_invalid_comments_after_retry(
+async def test_run_step_repairs_invalid_comments_after_retry(
     tmp_path, prompt_info, runner_for
 ):
     harness = FakeHarness(
         result_writer(prompt_info, lambda a: {"comments": [BAD_COMMENT]})
     )
-    out = await run_pass(
+    out = await run_step(
         runner_for(harness, tmp_path),
-        ReviewPass.OVERALL,
-        pass_prompt_for,
+        OVERALL,
+        step_prompt_for,
         scope({"a.py"}),
-        PassResult,
+        StepResult,
     )
     assert len(harness.requests) == 2 and out.result is not None
     assert out.result.comments[0].body == "zzz.py: hm"
 
 
-async def test_run_pass_second_attempt_can_rescue(tmp_path, prompt_info, runner_for):
+async def test_run_step_second_attempt_can_rescue(tmp_path, prompt_info, runner_for):
     harness = FakeHarness(
         result_writer(prompt_info, lambda a: None if a == 1 else {"comments": []})
     )
-    out = await run_pass(
+    out = await run_step(
         runner_for(harness, tmp_path),
-        ReviewPass.CODE_PATTERNS,
-        pass_prompt_for,
+        CODE_PATTERNS,
+        step_prompt_for,
         scope({"a.py"}),
-        PassResult,
+        StepResult,
     )
     assert out.result is not None and len(harness.requests) == 2
 
@@ -257,29 +262,25 @@ async def test_harness_error_propagates(tmp_path, runner_for):
         raise HarnessError("crashed")
 
     with pytest.raises(HarnessError):
-        await run_pass(
+        await run_step(
             runner_for(FakeHarness(boom), tmp_path),
-            ReviewPass.OVERALL,
+            OVERALL,
             lambda folder: f"Output folder: {folder}",
             scope({"a.py"}),
-            PassResult,
+            StepResult,
         )
 
 
-async def test_harness_per_pass(tmp_path, prompt_info, runner_for):
+async def test_harness_per_step(tmp_path, prompt_info, runner_for):
     default = FakeHarness(result_writer(prompt_info, lambda a: {"comments": []}))
     other = FakeHarness(result_writer(prompt_info, lambda a: {"comments": []}))
     runner = runner_for(
         default,
         tmp_path,
-        harnesses=lambda p: other if p == ReviewPass.OVERALL else default,
+        harnesses=lambda p: other if p == OVERALL else default,
     )
-    await run_pass(
-        runner, ReviewPass.OVERALL, pass_prompt_for, scope({"a.py"}), PassResult
-    )
-    await run_pass(
-        runner, ReviewPass.TEST_COVERAGE, pass_prompt_for, scope({"a.py"}), PassResult
-    )
+    await run_step(runner, OVERALL, step_prompt_for, scope({"a.py"}), StepResult)
+    await run_step(runner, TEST_COVERAGE, step_prompt_for, scope({"a.py"}), StepResult)
     assert (len(other.requests), len(default.requests)) == (1, 1)
 
 
@@ -299,9 +300,7 @@ async def test_request_wiring(tmp_path, prompt_info):
         semaphore=asyncio.Semaphore(1),
         on_event=None,
     )
-    await run_pass(
-        runner, ReviewPass.OVERALL, pass_prompt_for, scope({"a.py"}), PassResult
-    )
+    await run_step(runner, OVERALL, step_prompt_for, scope({"a.py"}), StepResult)
     req = harness.requests[0]
     assert (req.working_folder, req.extra_folders, req.timeout_seconds) == (
         code,

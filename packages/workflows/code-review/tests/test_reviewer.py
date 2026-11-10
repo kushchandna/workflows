@@ -7,11 +7,12 @@ import pytest
 from workflows.code_review import (
     Codebase,
     CodeReviewer,
+    ReviewAgent,
     ReviewEvent,
     ReviewInput,
     ReviewInputError,
-    ReviewPass,
     ReviewSettings,
+    ReviewStage,
 )
 from workflows.harness import HarnessError
 from workflows.harness.testing import FakeHarness
@@ -30,14 +31,23 @@ def diffs(tmp_path):
     return d
 
 
+def step_name(prompt_info, request):
+    """The stage, or the agent's name, read from the call's output folder."""
+    out = prompt_info.output_folder(request.prompt)
+    name = out.parts[out.parts.index("harness-output") + 1]
+    if name == "agents":
+        return out.parts[out.parts.index("harness-output") + 2]
+    return name
+
+
 def scripted(
-    prompt_info, per_file=None, passes=None, status="approved", consolidation=()
+    prompt_info, per_file=None, agents=None, status="approved", consolidation=()
 ):
-    """One harness that answers every pass; the pass is read from the output folder."""
+    """One harness that answers every step; the step is read from the output folder."""
 
     def respond(req):
         out = prompt_info.output_folder(req.prompt)
-        name = out.parts[out.parts.index("harness-output") + 1]
+        name = step_name(prompt_info, req)
         if name == "per-file":
             for n, path in prompt_info.slots(req.prompt):
                 body = (per_file or (lambda p: {"path": p, "summary": "ok"}))(path)
@@ -47,17 +57,12 @@ def scripted(
             body = {"status": status, "comments": list(consolidation)}
             (out / "result.json").write_text(json.dumps(body))
         else:
-            body = (passes or {}).get(name, {"comments": []})
+            body = (agents or {}).get(name, {"comments": []})
             if body is not None:
                 (out / "result.json").write_text(json.dumps(body))
         return "done"
 
     return respond
-
-
-def pass_name(prompt_info, request):
-    out = prompt_info.output_folder(request.prompt)
-    return out.parts[out.parts.index("harness-output") + 1]
 
 
 async def test_happy_path(tmp_path, diffs, prompt_info):
@@ -75,11 +80,16 @@ async def test_happy_path(tmp_path, diffs, prompt_info):
         "b.py": ("reviewed", None),
         "img.png": ("skipped", "binary file"),
     }
-    passes = {p.review_pass: (p.state, p.reason) for p in r.coverage.passes}
-    assert passes[ReviewPass.CODE_PATTERNS] == ("skipped", "no codebase")
-    assert passes[ReviewPass.CONSOLIDATION] == ("ran", None)
-    assert (work / "review-passes" / "per-file" / "a.py.json").exists()
-    assert (work / "review-passes" / "consolidation" / "result.json").exists()
+    stages = {s.stage: (s.state, s.reason) for s in r.coverage.stages}
+    assert stages == {s: ("ran", None) for s in ReviewStage}
+    agents = [(a.agent, a.state, a.reason) for a in r.coverage.agents]
+    assert agents == [
+        ("test-coverage", "ran", None),
+        ("code-patterns", "skipped", "no codebase"),
+    ]
+    assert (work / "results" / "per-file" / "a.py.json").exists()
+    assert (work / "results" / "agents" / "test-coverage" / "result.json").exists()
+    assert (work / "results" / "consolidation" / "result.json").exists()
     assert (work / "input" / "diffs" / "a.py.diff").exists()
     assert json.loads((work / "input" / "threads.json").read_text()) == []
     req = harness.requests[0]
@@ -101,19 +111,19 @@ async def test_unreviewed_file_forces_inconclusive(diffs, prompt_info):
     assert ("b.py", "unreviewed", "no valid result after retry") in files
 
 
-async def test_failed_pass_forces_inconclusive(diffs, prompt_info):
-    harness = FakeHarness(scripted(prompt_info, passes={"test-coverage": None}))
+async def test_failed_agent_forces_inconclusive(diffs, prompt_info):
+    harness = FakeHarness(scripted(prompt_info, agents={"test-coverage": None}))
     r = await CodeReviewer(harness).review(ReviewInput(diffs=diffs))
     assert r.status == "inconclusive"
-    passes = {p.review_pass: (p.state, p.reason) for p in r.coverage.passes}
-    assert passes[ReviewPass.TEST_COVERAGE] == ("failed", "no valid result after retry")
+    agents = {a.agent: (a.state, a.reason) for a in r.coverage.agents}
+    assert agents["test-coverage"] == ("failed", "no valid result after retry")
 
 
 async def test_failed_consolidation_raises(diffs, prompt_info):
     inner = scripted(prompt_info)
 
     def respond(req):
-        if pass_name(prompt_info, req) != "consolidation":
+        if step_name(prompt_info, req) != "consolidation":
             return inner(req)
         return "wrote nothing"
 
@@ -135,7 +145,7 @@ THREAD = {
 }
 
 
-async def test_replies_and_actions_from_routed_pass_survive(
+async def test_replies_and_actions_from_routed_stage_survive(
     tmp_path, diffs, prompt_info
 ):
     threads = tmp_path / "threads.json"
@@ -167,7 +177,7 @@ async def test_replies_and_actions_from_routed_pass_survive(
     assert r.comments[0].target.type == "lines"
     assert [(a.thread_id, a.action) for a in r.thread_actions] == [("t1", "resolve")]
     consolidation = [
-        q for q in harness.requests if pass_name(prompt_info, q) == "consolidation"
+        q for q in harness.requests if step_name(prompt_info, q) == "consolidation"
     ]
     assert "Threads you may act on: none" in consolidation[0].prompt
 
@@ -179,7 +189,7 @@ async def test_overall_gets_change_level_threads(tmp_path, diffs, prompt_info):
     harness = FakeHarness(scripted(prompt_info))
     await CodeReviewer(harness).review(ReviewInput(diffs=diffs, discussions=[threads]))
     offered = {
-        pass_name(prompt_info, q): q.prompt.split("Threads you may act on: ")[1].split(
+        step_name(prompt_info, q): q.prompt.split("Threads you may act on: ")[1].split(
             "\n"
         )[0]
         for q in harness.requests
@@ -195,10 +205,10 @@ async def test_no_changes(tmp_path, prompt_info):
     harness = FakeHarness(scripted(prompt_info))
     r = await CodeReviewer(harness).review(ReviewInput(diffs=tmp_path / "empty"))
     assert r.status == "approved" and harness.requests == []
-    assert {(p.state, p.reason) for p in r.coverage.passes} == {
-        ("skipped", "no changes")
-    }
-    assert len(r.coverage.passes) == len(ReviewPass)
+    coverage = [*r.coverage.stages, *r.coverage.agents]
+    assert {(c.state, c.reason) for c in coverage} == {("skipped", "no changes")}
+    assert len(r.coverage.stages) == len(ReviewStage)
+    assert [a.agent for a in r.coverage.agents] == ["test-coverage", "code-patterns"]
 
 
 async def test_only_binary_files(tmp_path, prompt_info):
@@ -208,9 +218,8 @@ async def test_only_binary_files(tmp_path, prompt_info):
     harness = FakeHarness(scripted(prompt_info))
     r = await CodeReviewer(harness).review(ReviewInput(diffs=d))
     assert r.status == "approved" and harness.requests == []
-    assert {(p.state, p.reason) for p in r.coverage.passes} == {
-        ("skipped", "only binary files")
-    }
+    coverage = [*r.coverage.stages, *r.coverage.agents]
+    assert {(c.state, c.reason) for c in coverage} == {("skipped", "only binary files")}
     assert [(f.path, f.state) for f in r.coverage.files] == [("img.png", "skipped")]
 
 
@@ -261,14 +270,22 @@ async def test_harness_error_cancels_and_propagates(diffs):
         await asyncio.wait_for(reviewer.review(ReviewInput(diffs=diffs)), 5)
 
 
-async def test_pass_harnesses_override(diffs, prompt_info):
+async def test_stage_and_agent_harnesses_override(diffs, prompt_info):
     default = FakeHarness(scripted(prompt_info))
-    other = FakeHarness(scripted(prompt_info))
-    reviewer = CodeReviewer(default, pass_harnesses={ReviewPass.CONSOLIDATION: other})
+    stage = FakeHarness(scripted(prompt_info))
+    agent = FakeHarness(scripted(prompt_info))
+    reviewer = CodeReviewer(
+        default,
+        stage_harnesses={ReviewStage.CONSOLIDATION: stage},
+        agent_harnesses={"test-coverage": agent, "not-running": agent},
+    )
     await reviewer.review(ReviewInput(diffs=diffs))
-    assert len(other.requests) == 1
-    assert pass_name(prompt_info, other.requests[0]) == "consolidation"
-    assert all(pass_name(prompt_info, q) != "consolidation" for q in default.requests)
+    assert [step_name(prompt_info, q) for q in stage.requests] == ["consolidation"]
+    assert [step_name(prompt_info, q) for q in agent.requests] == ["test-coverage"]
+    assert {step_name(prompt_info, q) for q in default.requests} == {
+        "per-file",
+        "overall",
+    }
 
 
 async def test_events_reach_on_event_labeled(diffs, prompt_info):
@@ -283,9 +300,125 @@ async def test_events_reach_on_event_labeled(diffs, prompt_info):
         scripted(prompt_info), events=[TextEvent(call_id="x", text="hi")]
     )
     await CodeReviewer(harness).review(ReviewInput(diffs=diffs), on_event=seen.append)
-    labels = {(e.review_pass, e.batch, e.attempt) for e in seen}
-    assert (ReviewPass.PER_FILE, 1, 1) in labels
-    assert (ReviewPass.CONSOLIDATION, None, 1) in labels
+    labels = {(e.stage, e.agent, e.batch, e.attempt) for e in seen}
+    assert (ReviewStage.PER_FILE, None, 1, 1) in labels
+    assert (None, "test-coverage", None, 1) in labels
+    assert (ReviewStage.CONSOLIDATION, None, None, 1) in labels
+
+
+async def test_chosen_and_custom_agents_run(tmp_path, diffs, prompt_info):
+    work = tmp_path / "work"
+    security = ReviewAgent(name="security", instructions="Look for injection.")
+    finding = {"comments": [{"target": {"type": "change"}, "body": "SQL injection"}]}
+    harness = FakeHarness(scripted(prompt_info, agents={"security": finding}))
+    reviewer = CodeReviewer(harness, settings=ReviewSettings(work_folder=work))
+    r = await reviewer.review(
+        ReviewInput(diffs=diffs, agents=["test-coverage", security])
+    )
+    assert [(a.agent, a.state) for a in r.coverage.agents] == [
+        ("test-coverage", "ran"),
+        ("security", "ran"),
+    ]
+    by_step = {step_name(prompt_info, q): q.prompt for q in harness.requests}
+    assert set(by_step) == {
+        "per-file",
+        "test-coverage",
+        "security",
+        "overall",
+        "consolidation",
+    }
+    assert "Look for injection." in by_step["security"]
+    assert "agents/security/result.json" in by_step["consolidation"]
+    saved = work / "results" / "agents" / "security" / "result.json"
+    assert json.loads(saved.read_text())["comments"][0]["body"] == "SQL injection"
+
+
+async def test_no_agents(diffs, prompt_info):
+    harness = FakeHarness(scripted(prompt_info))
+    r = await CodeReviewer(harness).review(ReviewInput(diffs=diffs, agents=[]))
+    assert r.coverage.agents == []
+    assert {step_name(prompt_info, q) for q in harness.requests} == {
+        "per-file",
+        "overall",
+        "consolidation",
+    }
+
+
+async def test_custom_agent_may_replace_a_builtin(diffs, prompt_info):
+    mine = ReviewAgent(name="test-coverage", instructions="Only check the API tests.")
+    harness = FakeHarness(scripted(prompt_info))
+    await CodeReviewer(harness).review(ReviewInput(diffs=diffs, agents=[mine]))
+    [prompt] = [
+        q.prompt
+        for q in harness.requests
+        if step_name(prompt_info, q) == "test-coverage"
+    ]
+    assert "Only check the API tests." in prompt
+
+
+@pytest.mark.parametrize(
+    "agents, message",
+    [
+        (["nope"], "unknown review agent 'nope'"),
+        (["test-coverage", "test-coverage"], "chosen twice"),
+        (
+            ["test-coverage", ReviewAgent(name="test-coverage", instructions="x")],
+            "chosen twice",
+        ),
+    ],
+)
+async def test_bad_agent_choice_is_an_input_error(tmp_path, diffs, agents, message):
+    work = tmp_path / "work"
+    harness = FakeHarness()
+    reviewer = CodeReviewer(harness, settings=ReviewSettings(work_folder=work))
+    with pytest.raises(ReviewInputError, match=message):
+        await reviewer.review(ReviewInput(diffs=diffs, agents=agents))
+    assert harness.requests == [] and not work.exists()
+
+
+async def test_agent_thread_actions_are_dropped_and_labeled(
+    tmp_path, diffs, prompt_info
+):
+    threads = tmp_path / "threads.json"
+    threads.write_text(json.dumps([THREAD]))
+    body = {
+        "comments": [{"target": {"type": "change"}, "body": "Fixed", "reply_to": "t1"}],
+        "thread_actions": [{"thread_id": "t1", "action": "resolve"}],
+    }
+    harness = FakeHarness(scripted(prompt_info, agents={"test-coverage": body}))
+    r = await CodeReviewer(harness).review(
+        ReviewInput(diffs=diffs, discussions=[threads], agents=["test-coverage"])
+    )
+    assert r.thread_actions == []
+    assert all(c.reply_to is None for c in r.comments)
+    dropped = [
+        (d.thread_id, d.stage, d.agent) for d in r.coverage.dropped_thread_actions
+    ]
+    assert dropped == [("t1", None, "test-coverage")]
+
+
+async def test_custom_agent_that_needs_a_codebase_is_skipped(diffs, prompt_info):
+    ui = ReviewAgent(name="ui", instructions="Check layouts.", needs_codebase=True)
+    harness = FakeHarness(scripted(prompt_info, agents={"test-coverage": None}))
+    r = await CodeReviewer(harness).review(
+        ReviewInput(diffs=diffs, agents=[ui, "test-coverage"])
+    )
+    assert [(a.agent, a.state, a.reason) for a in r.coverage.agents] == [
+        ("ui", "skipped", "no codebase"),
+        ("test-coverage", "failed", "no valid result after retry"),
+    ]
+    assert "ui" not in {step_name(prompt_info, q) for q in harness.requests}
+    [consolidation] = [
+        q.prompt
+        for q in harness.requests
+        if step_name(prompt_info, q) == "consolidation"
+    ]
+    assert "- review agent ui: skipped (no codebase)" in consolidation
+    assert (
+        "- review agent test-coverage: failed (no valid result after retry)"
+        in consolidation
+    )
+    assert "agents/ui/result.json" not in consolidation
 
 
 @pytest.mark.git
@@ -318,8 +451,8 @@ async def test_codebase_mode_reads_the_repository(tmp_path, prompt_info):
     review_input = ReviewInput(codebase=Codebase(path=repo, base_commit=base))
     r = await CodeReviewer(harness).review(review_input)
     assert {f.path for f in r.coverage.files} == {"a.py", "new.py"}
-    passes = {p.review_pass: p.state for p in r.coverage.passes}
-    assert passes[ReviewPass.CODE_PATTERNS] == "ran"
+    agents = {a.agent: a.state for a in r.coverage.agents}
+    assert agents == {"test-coverage": "ran", "code-patterns": "ran"}
     assert {q.working_folder for q in harness.requests} == {repo}
 
 

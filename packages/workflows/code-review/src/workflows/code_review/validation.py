@@ -17,7 +17,7 @@ from workflows.code_review.models import (
 
 M = TypeVar("M", bound=BaseModel)
 
-NOT_AVAILABLE = "thread not available to this pass"
+NOT_AVAILABLE = "thread not available to this stage or agent"
 
 
 @dataclass(frozen=True)

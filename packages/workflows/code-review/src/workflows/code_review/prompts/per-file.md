@@ -10,14 +10,12 @@ Your job, for each file's change:
   read the file, so it must describe this change and not just name the file;
 - follow up on the threads you may act on that concern the file.
 
-Not your job (other passes cover these):
+Not your job (other reviewers cover these):
 
-- problems that span several files;
-- whether the change is tested;
-- whether the change follows the codebase's conventions.
+$not_your_job
 
 Every comment's target must be a file in this batch. Leave problems in other files to the
-other passes.
+other reviewers.
 
 Files in this batch. The diff of each is at $diffs_dir/<path>.diff:
 

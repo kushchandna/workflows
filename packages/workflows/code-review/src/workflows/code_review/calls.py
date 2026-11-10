@@ -3,15 +3,30 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from workflows.code_review.models import ReviewEvent, ReviewPass
+from workflows.code_review.models import ReviewEvent, ReviewStage
 from workflows.harness import Event, Harness, HarnessRequest
 
 
-def output_folder(
-    work: Path, review_pass: ReviewPass, batch: int | None, attempt: int
-) -> Path:
-    """Where a harness writes its raw files: ``harness-output/<pass>/[batch-<k>/]attempt-<a>``."""
-    folder = work / "harness-output" / review_pass.value
+@dataclass(frozen=True)
+class Step:
+    """A part of the review that makes harness calls: a stage or a review agent."""
+
+    stage: ReviewStage | None = None
+    agent: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.stage is None) == (self.agent is None):
+            raise ValueError("a step is either a stage or an agent")
+
+    @property
+    def folder(self) -> str:
+        """Its folder under ``harness-output/`` and ``results/``."""
+        return self.stage.value if self.stage else f"agents/{self.agent}"
+
+
+def output_folder(work: Path, step: Step, batch: int | None, attempt: int) -> Path:
+    """Where a harness writes its raw files: ``harness-output/<step>/[batch-<k>/]attempt-<a>``."""
+    folder = work / "harness-output" / step.folder
     if batch is not None:
         folder = folder / f"batch-{batch}"
     return folder / f"attempt-{attempt}"
@@ -19,9 +34,9 @@ def output_folder(
 
 @dataclass
 class CallRunner:
-    """Runs harness calls: picks the pass's harness, limits parallelism, labels events."""
+    """Runs harness calls: picks the step's harness, limits parallelism, labels events."""
 
-    harnesses: Callable[[ReviewPass], Harness]
+    harnesses: Callable[[Step], Harness]
     working_folder: Path
     work: Path
     timeout_seconds: float | None
@@ -30,7 +45,7 @@ class CallRunner:
 
     async def call(
         self,
-        review_pass: ReviewPass,
+        step: Step,
         batch: int | None,
         attempt: int,
         folder: Path,
@@ -48,7 +63,8 @@ class CallRunner:
             if self.on_event is not None:
                 self.on_event(
                     ReviewEvent(
-                        review_pass=review_pass,
+                        stage=step.stage,
+                        agent=step.agent,
                         batch=batch,
                         attempt=attempt,
                         event=event,
@@ -56,4 +72,4 @@ class CallRunner:
                 )
 
         async with self.semaphore:
-            await self.harnesses(review_pass).run(request, on_event=forward)
+            await self.harnesses(step).run(request, on_event=forward)

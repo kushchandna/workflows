@@ -1,4 +1,4 @@
-"""Prompts for the review passes, filled from the templates in ``prompts/``.
+"""Prompts for the review stages and agents, filled from the templates in ``prompts/``.
 
 Some lines are fixed because the code and the tests rely on them: ``Output folder:``,
 ``Slot <n>: <path>``, ``Result file:`` and ``Threads you may act on:``.
@@ -9,7 +9,7 @@ from importlib.resources import files
 from pathlib import Path
 from string import Template
 
-from workflows.code_review.models import ReviewPass
+from workflows.code_review.models import ReviewAgent
 
 _NONE = "(none)"
 
@@ -22,6 +22,7 @@ class PromptContext:
     instructions: str | None
     change_author: str | None
     reviewer_name: str | None
+    agents: tuple[str, ...] = ()  # names of the review agents that run
 
 
 def _template(name: str) -> Template:
@@ -33,6 +34,14 @@ def _template(name: str) -> Template:
 
 def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else _NONE
+
+
+def _sentence_list(items: list[str]) -> str:
+    """Bullets joined like one sentence: ";" after each item but the last, "." after it."""
+    return "\n".join(
+        f"- {item}{'.' if n == len(items) else ';'}"
+        for n, item in enumerate(items, start=1)
+    )
 
 
 def _shared(ctx: PromptContext, output_folder: Path, thread_ids: list[str]) -> str:
@@ -53,7 +62,7 @@ def _shared(ctx: PromptContext, output_folder: Path, thread_ids: list[str]) -> s
         codebase=f"{ctx.codebase}" if ctx.codebase else "not available, only the diffs",
         diffs_dir=ctx.work / "input" / "diffs",
         threads_file=ctx.work / "input" / "threads.json",
-        passes_dir=ctx.work / "review-passes",
+        results_dir=ctx.work / "results",
         people=f"{change_author}\n{reviewer}",
         thread_ids=", ".join(thread_ids) if thread_ids else "none",
         output_folder=output_folder,
@@ -66,7 +75,14 @@ def per_file_prompt(
     slots: list[tuple[int, str]],
     thread_ids: list[str],
 ) -> str:
+    not_your_job = ["problems that span several files"]
+    if ctx.agents:
+        not_your_job.append(
+            "the focus of each review agent that also runs, each named for its focus: "
+            + ", ".join(ctx.agents)
+        )
     return _template("per-file").substitute(
+        not_your_job=_sentence_list(not_your_job),
         diffs_dir=ctx.work / "input" / "diffs",
         slots="\n".join(f"Slot {n}: {path}" for n, path in slots),
         output_folder=output_folder,
@@ -74,17 +90,15 @@ def per_file_prompt(
     )
 
 
-def pass_prompt(
+def overall_prompt(
     ctx: PromptContext,
-    review_pass: ReviewPass,
     output_folder: Path,
     changed_paths: list[str],
     unreviewed: list[str],
     thread_ids: list[str],
 ) -> str:
-    """The prompt for the overall, test coverage and code patterns passes."""
-    return _template(review_pass.value).safe_substitute(
-        passes_dir=ctx.work / "review-passes",
+    return _template("overall").substitute(
+        results_dir=ctx.work / "results",
         changed=_bullets(changed_paths),
         unreviewed=_bullets(unreviewed),
         output_folder=output_folder,
@@ -92,11 +106,44 @@ def pass_prompt(
     )
 
 
+def agent_prompt(
+    ctx: PromptContext,
+    agent: ReviewAgent,
+    output_folder: Path,
+    changed_paths: list[str],
+) -> str:
+    """A review agent's prompt. It may not act on threads."""
+    others = [name for name in ctx.agents if name != agent.name]
+    other_agents = (
+        "Other review agents also run, each named for its focus: "
+        f"{', '.join(others)}. Leave their focus to them too."
+        if others
+        else "No other review agents run."
+    )
+    return _template("agent").substitute(
+        name=agent.name,
+        other_agents=other_agents,
+        instructions=agent.instructions.strip(),
+        changed=_bullets(changed_paths),
+        output_folder=output_folder,
+        shared=_shared(ctx, output_folder, []),
+    )
+
+
 def consolidation_prompt(
     ctx: PromptContext, output_folder: Path, thread_ids: list[str], coverage_text: str
 ) -> str:
+    result_files = [
+        "per-file/<path>.json: one per reviewed file",
+        *(
+            f"agents/{name}/result.json: from the {name} review agent"
+            for name in ctx.agents
+        ),
+        "overall/result.json",
+    ]
     return _template("consolidation").substitute(
-        passes_dir=ctx.work / "review-passes",
+        results_dir=ctx.work / "results",
+        result_files=_sentence_list(result_files),
         coverage=coverage_text,
         output_folder=output_folder,
         shared=_shared(ctx, output_folder, thread_ids),

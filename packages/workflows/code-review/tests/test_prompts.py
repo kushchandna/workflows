@@ -3,11 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from workflows.code_review import ReviewPass
+from workflows.code_review import BUILTIN_AGENTS, ReviewAgent
 from workflows.code_review.prompts import (
     PromptContext,
+    agent_prompt,
     consolidation_prompt,
-    pass_prompt,
+    overall_prompt,
     per_file_prompt,
 )
 
@@ -18,6 +19,7 @@ CTX = PromptContext(
     instructions="Prefer small functions",
     change_author="alice",
     reviewer_name="bot",
+    agents=("test-coverage", "security"),
 )
 FIXED = ["Output folder", "Result file", "Threads you may act on"]
 
@@ -43,20 +45,25 @@ def test_per_file_prompt_lines():
         "bot",
         "/w/input/diffs",
         "/w/input/threads.json",
-        "/w/review-passes",
+        "/w/results",
         "/repo",
         f"{out}/1.json",
     ]:
         assert text in p
 
 
-@pytest.mark.parametrize(
-    "review_pass",
-    [ReviewPass.OVERALL, ReviewPass.TEST_COVERAGE, ReviewPass.CODE_PATTERNS],
-)
-def test_pass_prompts_have_result_file_and_no_slots(review_pass):
-    out = Path(f"/w/harness-output/{review_pass.value}/attempt-1")
-    p = pass_prompt(CTX, review_pass, out, ["a.py"], ["b.py"], [])
+def single_result_prompts(ctx, out):
+    """The overall prompt, and one prompt per built-in agent."""
+    return [
+        overall_prompt(ctx, out, ["a.py"], ["b.py"], []),
+        *(agent_prompt(ctx, a, out, ["a.py"]) for a in BUILTIN_AGENTS.values()),
+    ]
+
+
+@pytest.mark.parametrize("index", range(1 + len(BUILTIN_AGENTS)))
+def test_single_result_prompts_have_result_file_and_no_slots(index):
+    out = Path("/w/harness-output/x/attempt-1")
+    p = single_result_prompts(CTX, out)[index]
     assert line_values(p, "Result file") == [f"{out}/result.json"]
     assert line_values(p, "Output folder") == [str(out)]
     assert not re.findall(r"^Slot ", p, re.MULTILINE)
@@ -65,15 +72,45 @@ def test_pass_prompts_have_result_file_and_no_slots(review_pass):
 
 
 def test_overall_prompt_lists_unreviewed_files():
-    assert "b.py" in pass_prompt(
-        CTX, ReviewPass.OVERALL, Path("/o"), ["a.py"], ["b.py"], []
-    )
+    assert "b.py" in overall_prompt(CTX, Path("/o"), ["a.py"], ["b.py"], [])
+
+
+def test_agent_prompt_carries_the_agents_focus_verbatim():
+    agent = ReviewAgent(name="ui", instructions="Check the $layout of {screens}.")
+    p = agent_prompt(CTX, agent, Path("/o"), ["a.py"])
+    assert "# Review agent: ui" in p
+    assert "Check the $layout of {screens}." in p
+    assert line_values(p, "Threads you may act on") == ["none"]
+    assert '"thread_actions" must be empty' in p
+
+
+def test_per_file_prompt_leaves_the_agents_focus_to_them():
+    p = per_file_prompt(CTX, Path("/o"), [(1, "a.py")], [])
+    assert "- problems that span several files;\n" in p
+    assert "each named for its focus: test-coverage, security.\n" in p
+    alone = PromptContext(**{**CTX.__dict__, "agents": ()})
+    p = per_file_prompt(alone, Path("/o"), [(1, "a.py")], [])
+    assert "review agent" not in p
+    assert "- problems that span several files.\n" in p
+
+
+def test_agent_prompt_names_the_other_agents():
+    agent = ReviewAgent(name="security", instructions="x")
+    p = agent_prompt(CTX, agent, Path("/o"), ["a.py"])
+    assert "Other review agents also run, each named for its focus: test-coverage." in p
+    alone = PromptContext(**{**CTX.__dict__, "agents": ("security",)})
+    assert "No other review agents run." in agent_prompt(alone, agent, Path("/o"), [])
 
 
 def test_consolidation_prompt():
     out = Path("/w/harness-output/consolidation/attempt-1")
     p = consolidation_prompt(CTX, out, ["t3"], "files: 1 unreviewed")
-    assert "files: 1 unreviewed" in p and "/w/review-passes" in p
+    assert "files: 1 unreviewed" in p and "/w/results" in p
+    assert (
+        "- agents/test-coverage/result.json: from the test-coverage review agent;" in p
+    )
+    assert "- agents/security/result.json: from the security review agent;" in p
+    assert "- overall/result.json.\n" in p
     assert line_values(p, "Threads you may act on") == ["t3"]
     assert line_values(p, "Result file") == [f"{out}/result.json"]
 
@@ -89,9 +126,7 @@ def test_missing_text_shows_none_and_no_template_leftovers():
     )
     prompts = [
         per_file_prompt(ctx, Path("/o"), [(1, "a.py")], []),
-        pass_prompt(ctx, ReviewPass.OVERALL, Path("/o"), ["a.py"], [], []),
-        pass_prompt(ctx, ReviewPass.TEST_COVERAGE, Path("/o"), ["a.py"], [], []),
-        pass_prompt(ctx, ReviewPass.CODE_PATTERNS, Path("/o"), ["a.py"], [], []),
+        *single_result_prompts(ctx, Path("/o")),
         consolidation_prompt(ctx, Path("/o"), [], "nothing"),
     ]
     for p in prompts:
@@ -125,13 +160,9 @@ def test_per_file_prompt_keeps_targets_inside_the_batch():
     assert "must be a file in this batch" in p
 
 
-@pytest.mark.parametrize(
-    "review_pass",
-    [ReviewPass.OVERALL, ReviewPass.TEST_COVERAGE, ReviewPass.CODE_PATTERNS],
-)
-def test_other_passes_may_point_at_unchanged_files(review_pass):
-    p = pass_prompt(CTX, review_pass, Path("/o"), ["a.py"], [], [])
-    assert "unchanged files" in p
+@pytest.mark.parametrize("index", range(1 + len(BUILTIN_AGENTS)))
+def test_overall_and_agents_may_point_at_unchanged_files(index):
+    assert "unchanged files" in single_result_prompts(CTX, Path("/o"))[index]
 
 
 def test_paths_are_relative_to_the_codebase_folder():
@@ -147,5 +178,5 @@ def test_consolidation_status_only_blocks_on_real_problems():
     )  # unwrap lines
     assert "suggestions and small remarks alone do not block" in p
     assert "must be fixed before the change can be accepted" in p
-    # an earlier pass's resolve or reopen decides whether the reviewer's own thread still blocks
+    # an earlier stage's resolve or reopen decides whether the reviewer's own thread still blocks
     assert "after applying the thread actions" in p

@@ -1,13 +1,13 @@
-"""Running one pass, or one per-file batch, with its single retry."""
+"""Running one step, or one per-file batch, with its single retry."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from workflows.code_review.calls import CallRunner, output_folder
+from workflows.code_review.calls import CallRunner, Step, output_folder
 from workflows.code_review.changes import ChangedFile
-from workflows.code_review.formats import ConsolidationResult, PassResult, PerFileResult
-from workflows.code_review.models import DroppedThreadAction, ReviewPass
+from workflows.code_review.formats import ConsolidationResult, PerFileResult, StepResult
+from workflows.code_review.models import DroppedThreadAction, ReviewStage
 from workflows.code_review.prompts import PromptContext, per_file_prompt
 from workflows.code_review.validation import (
     Checked,
@@ -16,6 +16,8 @@ from workflows.code_review.validation import (
     read_result,
     usable_per_file,
 )
+
+PER_FILE = Step(stage=ReviewStage.PER_FILE)
 
 
 @dataclass
@@ -26,19 +28,20 @@ class FileOutcome:
 
 
 @dataclass
-class PassOutcome:
+class StepOutcome:
     result: (
-        PassResult | ConsolidationResult | None
-    )  # checked; None means the pass failed
+        StepResult | ConsolidationResult | None
+    )  # checked; None means the step failed
     dropped: list[DroppedThreadAction]
 
 
-def _dropped(checked: Checked, review_pass: ReviewPass) -> list[DroppedThreadAction]:
+def _dropped(checked: Checked, step: Step) -> list[DroppedThreadAction]:
     return [
         DroppedThreadAction(
             thread_id=action.thread_id,
             action=action.action,
-            review_pass=review_pass,
+            stage=step.stage,
+            agent=step.agent,
             reason=reason,
         )
         for action, reason in checked.dropped
@@ -54,10 +57,10 @@ async def _per_file_attempt(
     scope: Scope,
 ) -> list[tuple[PerFileResult | None, Checked | None]]:
     """Run one call over ``files`` and read back one (result, checked) per file."""
-    folder = output_folder(runner.work, ReviewPass.PER_FILE, batch_index, attempt)
+    folder = output_folder(runner.work, PER_FILE, batch_index, attempt)
     slots = [(n, file.path) for n, file in enumerate(files, start=1)]
     prompt = per_file_prompt(ctx, folder, slots, sorted(scope.thread_ids))
-    await runner.call(ReviewPass.PER_FILE, batch_index, attempt, folder, prompt)
+    await runner.call(PER_FILE, batch_index, attempt, folder, prompt)
     outcomes: list[tuple[PerFileResult | None, Checked | None]] = []
     for n, path in slots:
         result = read_result(folder / f"{n}.json", PerFileResult)
@@ -116,22 +119,22 @@ async def run_per_file_batch(
             comments=checked.comments,
             thread_actions=checked.thread_actions,
         )
-        out.dropped += _dropped(checked, ReviewPass.PER_FILE)
+        out.dropped += _dropped(checked, PER_FILE)
     return out
 
 
-async def run_pass(
+async def run_step(
     runner: CallRunner,
-    review_pass: ReviewPass,
+    step: Step,
     prompt_for: Callable[[Path], str],
     scope: Scope,
-    model: type[PassResult] | type[ConsolidationResult],
-) -> PassOutcome:
-    """Run a single-result pass; an unusable result or invalid comments get one retry."""
-    best: tuple[PassResult | ConsolidationResult, Checked] | None = None
+    model: type[StepResult] | type[ConsolidationResult],
+) -> StepOutcome:
+    """Run a single-result step; an unusable result or invalid comments get one retry."""
+    best: tuple[StepResult | ConsolidationResult, Checked] | None = None
     for attempt in (1, 2):
-        folder = output_folder(runner.work, review_pass, None, attempt)
-        await runner.call(review_pass, None, attempt, folder, prompt_for(folder))
+        folder = output_folder(runner.work, step, None, attempt)
+        await runner.call(step, None, attempt, folder, prompt_for(folder))
         result = read_result(folder / "result.json", model)
         if result is None:
             continue
@@ -140,9 +143,9 @@ async def run_pass(
         if not checked.had_invalid:
             break
     if best is None:
-        return PassOutcome(result=None, dropped=[])
+        return StepOutcome(result=None, dropped=[])
     result, checked = best
     final = result.model_copy(
         update={"comments": checked.comments, "thread_actions": checked.thread_actions}
     )
-    return PassOutcome(result=final, dropped=_dropped(checked, review_pass))
+    return StepOutcome(result=final, dropped=_dropped(checked, step))

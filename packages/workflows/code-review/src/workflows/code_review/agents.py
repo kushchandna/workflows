@@ -22,12 +22,14 @@ BUILTIN_AGENTS = MappingProxyType(
         for agent in [
             _builtin("test-coverage"),
             _builtin("code-patterns", needs_codebase=True),
+            _builtin("security"),
+            _builtin("ui"),
         ]
     }
 )
 
 # The agents a review runs when the input doesn't choose.
-DEFAULT_AGENTS: tuple[str, ...] = ("test-coverage", "code-patterns")
+DEFAULT_AGENTS: tuple[str, ...] = ("test-coverage", "code-patterns", "security")
 
 
 def resolve_agents(selected: list[str | ReviewAgent] | None) -> list[ReviewAgent]:

@@ -14,6 +14,8 @@ Not your job (other reviewers cover these):
 
 $not_your_job
 
+A clear bug in one of your files is still yours to raise, whatever kind of bug it is.
+
 Every comment's target must be a file in this batch. Leave problems in other files to the
 other reviewers.
 

@@ -76,9 +76,9 @@ def test_overall_prompt_lists_unreviewed_files():
 
 
 def test_agent_prompt_carries_the_agents_focus_verbatim():
-    agent = ReviewAgent(name="ui", instructions="Check the $layout of {screens}.")
+    agent = ReviewAgent(name="layout", instructions="Check the $layout of {screens}.")
     p = agent_prompt(CTX, agent, Path("/o"), ["a.py"])
-    assert "# Review agent: ui" in p
+    assert "# Review agent: layout" in p
     assert "Check the $layout of {screens}." in p
     assert line_values(p, "Threads you may act on") == ["none"]
     assert '"thread_actions" must be empty' in p
@@ -87,7 +87,7 @@ def test_agent_prompt_carries_the_agents_focus_verbatim():
 def test_per_file_prompt_leaves_the_agents_focus_to_them():
     p = per_file_prompt(CTX, Path("/o"), [(1, "a.py")], [])
     assert "- problems that span several files;\n" in p
-    assert "each named for its focus: test-coverage, security.\n" in p
+    assert "each named for its focus: test-coverage, security." in " ".join(p.split())
     alone = PromptContext(**{**CTX.__dict__, "agents": ()})
     p = per_file_prompt(alone, Path("/o"), [(1, "a.py")], [])
     assert "review agent" not in p
@@ -97,7 +97,9 @@ def test_per_file_prompt_leaves_the_agents_focus_to_them():
 def test_agent_prompt_names_the_other_agents():
     agent = ReviewAgent(name="security", instructions="x")
     p = agent_prompt(CTX, agent, Path("/o"), ["a.py"])
-    assert "Other review agents also run, each named for its focus: test-coverage." in p
+    assert (
+        "each named for its focus, and their focus is theirs:\n- test-coverage\n" in p
+    )
     alone = PromptContext(**{**CTX.__dict__, "agents": ("security",)})
     assert "No other review agents run." in agent_prompt(alone, agent, Path("/o"), [])
 

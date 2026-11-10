@@ -24,7 +24,7 @@ reviewer = CodeReviewer(
     default_harness=ClaudeCodeHarness("sonnet"),
     # Optional: a different harness for particular stages or review agents.
     stage_harnesses={ReviewStage.CONSOLIDATION: ClaudeCodeHarness("opus")},
-    agent_harnesses={"code-patterns": ClaudeCodeHarness("opus")},
+    agent_harnesses={"security": ClaudeCodeHarness("opus")},
 )
 result = await reviewer.review(
     ReviewInput(
@@ -37,8 +37,9 @@ result = await reviewer.review(
         # Optional: which review agents run. Leave it out for the default suite.
         agents=[
             "test-coverage",
-            "code-patterns",
-            ReviewAgent(name="accessibility", instructions="Your job: ..."),
+            "security",
+            "ui",
+            ReviewAgent(name="api-design", instructions="Your job: ..."),
         ],
     ),
     # Every harness action, labeled with its stage or agent, batch and attempt.
@@ -124,8 +125,11 @@ the status can't be `approved`.
 |---|---|---|
 | `test-coverage` | Whether new and changed behavior is tested, judged by reading code. | yes |
 | `code-patterns` | Whether the change follows the codebase's conventions. Needs a codebase. | yes |
+| `security` | Security problems the change introduces: injection, missing authorization, leaked secrets, unsafe configuration. | yes |
+| `ui` | Screens, components, styles and user-facing text: states, accessibility, layout, consistency and wording. | no |
 
-`BUILTIN_AGENTS` holds them by name and `DEFAULT_AGENTS` names the default suite.
+`BUILTIN_AGENTS` holds them by name and `DEFAULT_AGENTS` names the default suite. The per-file
+review leaves each running agent's focus to that agent, but still raises any clear bug it finds.
 
 A custom agent is a `ReviewAgent`:
 

@@ -5,6 +5,7 @@ import subprocess
 import pytest
 
 from workflows.code_review import (
+    DEFAULT_AGENTS,
     Codebase,
     CodeReviewer,
     ReviewAgent,
@@ -86,6 +87,7 @@ async def test_happy_path(tmp_path, diffs, prompt_info):
     assert agents == [
         ("test-coverage", "ran", None),
         ("code-patterns", "skipped", "no codebase"),
+        ("security", "ran", None),
     ]
     assert (work / "results" / "per-file" / "a.py.json").exists()
     assert (work / "results" / "agents" / "test-coverage" / "result.json").exists()
@@ -208,7 +210,7 @@ async def test_no_changes(tmp_path, prompt_info):
     coverage = [*r.coverage.stages, *r.coverage.agents]
     assert {(c.state, c.reason) for c in coverage} == {("skipped", "no changes")}
     assert len(r.coverage.stages) == len(ReviewStage)
-    assert [a.agent for a in r.coverage.agents] == ["test-coverage", "code-patterns"]
+    assert [a.agent for a in r.coverage.agents] == list(DEFAULT_AGENTS)
 
 
 async def test_only_binary_files(tmp_path, prompt_info):
@@ -284,6 +286,7 @@ async def test_stage_and_agent_harnesses_override(diffs, prompt_info):
     assert [step_name(prompt_info, q) for q in agent.requests] == ["test-coverage"]
     assert {step_name(prompt_info, q) for q in default.requests} == {
         "per-file",
+        "security",
         "overall",
     }
 
@@ -398,27 +401,35 @@ async def test_agent_thread_actions_are_dropped_and_labeled(
 
 
 async def test_custom_agent_that_needs_a_codebase_is_skipped(diffs, prompt_info):
-    ui = ReviewAgent(name="ui", instructions="Check layouts.", needs_codebase=True)
+    ui = ReviewAgent(name="layout", instructions="Check layouts.", needs_codebase=True)
     harness = FakeHarness(scripted(prompt_info, agents={"test-coverage": None}))
     r = await CodeReviewer(harness).review(
         ReviewInput(diffs=diffs, agents=[ui, "test-coverage"])
     )
     assert [(a.agent, a.state, a.reason) for a in r.coverage.agents] == [
-        ("ui", "skipped", "no codebase"),
+        ("layout", "skipped", "no codebase"),
         ("test-coverage", "failed", "no valid result after retry"),
     ]
-    assert "ui" not in {step_name(prompt_info, q) for q in harness.requests}
+    assert "layout" not in {step_name(prompt_info, q) for q in harness.requests}
     [consolidation] = [
         q.prompt
         for q in harness.requests
         if step_name(prompt_info, q) == "consolidation"
     ]
-    assert "- review agent ui: skipped (no codebase)" in consolidation
+    assert "- review agent layout: skipped (no codebase)" in consolidation
     assert (
         "- review agent test-coverage: failed (no valid result after retry)"
         in consolidation
     )
-    assert "agents/ui/result.json" not in consolidation
+    assert "agents/layout/result.json" not in consolidation
+
+
+async def test_builtin_ui_agent_runs_when_chosen(diffs, prompt_info):
+    harness = FakeHarness(scripted(prompt_info))
+    r = await CodeReviewer(harness).review(ReviewInput(diffs=diffs, agents=["ui"]))
+    assert [(a.agent, a.state) for a in r.coverage.agents] == [("ui", "ran")]
+    [prompt] = [q.prompt for q in harness.requests if step_name(prompt_info, q) == "ui"]
+    assert "You can't see the rendered interface" in prompt
 
 
 @pytest.mark.git
@@ -452,7 +463,7 @@ async def test_codebase_mode_reads_the_repository(tmp_path, prompt_info):
     r = await CodeReviewer(harness).review(review_input)
     assert {f.path for f in r.coverage.files} == {"a.py", "new.py"}
     agents = {a.agent: a.state for a in r.coverage.agents}
-    assert agents == {"test-coverage": "ran", "code-patterns": "ran"}
+    assert agents == {"test-coverage": "ran", "code-patterns": "ran", "security": "ran"}
     assert {q.working_folder for q in harness.requests} == {repo}
 
 

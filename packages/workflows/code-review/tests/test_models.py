@@ -98,7 +98,7 @@ def test_agent_names_must_be_safe_folder_names(name):
 
 def test_agent_instructions_must_not_be_blank():
     with pytest.raises(ValidationError):
-        ReviewAgent(name="ui", instructions="  \n")
+        ReviewAgent(name="layout", instructions="  \n")
 
 
 def test_builtin_agents():
@@ -108,19 +108,21 @@ def test_builtin_agents():
     assert [a.name for a in BUILTIN_AGENTS.values() if a.needs_codebase] == [
         "code-patterns"
     ]
+    assert list(BUILTIN_AGENTS) == ["test-coverage", "code-patterns", "security", "ui"]
+    assert DEFAULT_AGENTS == ("test-coverage", "code-patterns", "security")
 
 
 def test_input_with_agents_round_trips_through_json():
     review_input = ReviewInput(
         diffs=Path("/d"),
-        agents=["test-coverage", ReviewAgent(name="ui", instructions="x")],
+        agents=["test-coverage", ReviewAgent(name="layout", instructions="x")],
     )
     loaded = ReviewInput.model_validate_json(review_input.model_dump_json())
     assert loaded == review_input
     assert loaded.agents is not None and isinstance(loaded.agents[1], ReviewAgent)
 
 
-@pytest.mark.parametrize("source", [{}, {"stage": "overall", "agent": "ui"}])
+@pytest.mark.parametrize("source", [{}, {"stage": "overall", "agent": "layout"}])
 def test_event_and_dropped_action_name_exactly_one_source(source):
     from workflows.harness import TextEvent
 

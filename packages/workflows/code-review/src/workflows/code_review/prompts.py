@@ -4,6 +4,7 @@ Some lines are fixed because the code and the tests rely on them: ``Output folde
 ``Slot <n>: <path>``, ``Result file:`` and ``Threads you may act on:``.
 """
 
+import textwrap
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -39,7 +40,13 @@ def _bullets(items: list[str]) -> str:
 def _sentence_list(items: list[str]) -> str:
     """Bullets joined like one sentence: ";" after each item but the last, "." after it."""
     return "\n".join(
-        f"- {item}{'.' if n == len(items) else ';'}"
+        textwrap.fill(
+            f"- {item}{'.' if n == len(items) else ';'}",
+            width=95,
+            subsequent_indent="  ",
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
         for n, item in enumerate(items, start=1)
     )
 
@@ -115,8 +122,8 @@ def agent_prompt(
     """A review agent's prompt. It may not act on threads."""
     others = [name for name in ctx.agents if name != agent.name]
     other_agents = (
-        "Other review agents also run, each named for its focus: "
-        f"{', '.join(others)}. Leave their focus to them too."
+        "Other review agents also run, each named for its focus, and their focus is theirs:\n"
+        + _bullets(others)
         if others
         else "No other review agents run."
     )

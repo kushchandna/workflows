@@ -6,20 +6,20 @@ known; the workflow doesn't plan or design. It knows nothing about platforms or 
 end product (a Sonar fixer, a Jira bot) turns its own data into the input below, then pushes the
 commits and raises a merge request itself.
 
-Import: `workflows.code_change`. Depends on the [agent interface](../../agents/core/README.md)
-only, never on a concrete agent.
+Import: `workflows.code_change`. Depends on the [harness interface](../../harnesses/core/README.md)
+only, never on a concrete harness.
 
 ```python
 from pathlib import Path
 
-# The end product picks the agent.
-from workflows.agent_claude_code import ClaudeCodeAgent
+# The end product picks the harness.
+from workflows.harness_claude_code import ClaudeCodeHarness
 from workflows.code_change import ChangeInput, CodeChanger
 
 changer = CodeChanger(
-    change_agent=ClaudeCodeAgent("sonnet"),
-    # Optional: a different agent for the review. Defaults to the change agent.
-    review_agent=ClaudeCodeAgent("opus"),
+    change_harness=ClaudeCodeHarness("sonnet"),
+    # Optional: a different harness for the review. Defaults to the change harness.
+    review_harness=ClaudeCodeHarness("opus"),
 )
 result = await changer.change(
     ChangeInput(
@@ -29,7 +29,7 @@ result = await changer.change(
         checks=["uv run ruff check .", "uv run pytest -q"],
         review=True,
     ),
-    # Every agent action, labeled with its stage, attempt and call.
+    # Every harness action, labeled with its stage, attempt and call.
     on_event=print,
 )
 if result.status == "completed":
@@ -43,7 +43,7 @@ if result.status == "completed":
 | Field | Meaning |
 |---|---|
 | `codebase` | A git work tree, at its top level and **clean**: no uncommitted or untracked files (git-ignored files don't count). HEAD when the run starts is the base commit. The workflow commits on whatever is checked out, so create the branch first. |
-| `instruction` | Free text describing the change. It may include testing and validation guidance, which the agent follows. |
+| `instruction` | Free text describing the change. It may include testing and validation guidance, which the model follows. |
 | `commit_instructions` | Optional. The commit message template or rules. |
 | `checks` | Shell commands the workflow runs itself, from the codebase folder. Exit code 0 is a pass. Checks aren't run on the base commit first, so make sure they pass there. |
 | `review` | Run a spec review of the commits against the instruction. Default `False`. |
@@ -54,16 +54,17 @@ if result.status == "completed":
 
 | Field | Default | Meaning |
 |---|---|---|
-| `agent_timeout_seconds` | 1800 | Timeout for every agent call. |
+| `harness_timeout_seconds` | 1800 | Timeout for every harness call. |
 | `check_timeout_seconds` | 1800 | Timeout for each check command. |
-| `check_output_chars` | 20000 | How much of each check's output, from the end, is kept in the result and given to the agent. |
+| `check_output_chars` | 20000 | How much of each check's output, from the end, is kept in the result and given to the harness. |
 | `work_folder` | none | Keeps the run's files after it ends. Must be empty or missing and outside the codebase. |
 
-`ChangeInputError` is raised before any agent runs for invalid input: a blank instruction, a codebase
-that isn't the top of a git work tree or has no commits or isn't clean, a bad `work_folder`, or no
-`work_folder` while the system temporary folder (`TMPDIR`) is inside the codebase. A git failure in
-the workflow's own code raises `RuntimeError`, and a check's log that can't be written (a full disk)
-raises `OSError`; both reset the work tree first unless `reset_on_failure` is off.
+`ChangeInputError` is raised before any harness runs for invalid input: a blank instruction, a
+codebase that isn't the top of a git work tree or has no commits or isn't clean, a bad
+`work_folder`, or no `work_folder` while the system temporary folder (`TMPDIR`) is inside the
+codebase. A git failure in the workflow's own code raises `RuntimeError`, and a check's log that
+can't be written (a full disk) raises `OSError`; both reset the work tree first unless
+`reset_on_failure` is off.
 
 ## Output
 
@@ -71,7 +72,7 @@ raises `OSError`; both reset the work tree first unless `reset_on_failure` is of
 
 - **`status`**:
   - `completed`: every stage passed.
-  - `needs_human`: the agent stopped the run because the change needs human input: a design
+  - `needs_human`: the model stopped the run because the change needs human input: a design
     choice, a change much larger than it looked, an instruction that doesn't make sense against the
     code, or nothing to change (for example a false positive).
   - `inconclusive`: the review couldn't decide, or it changed the codebase. The run stops at once.
@@ -80,22 +81,22 @@ raises `OSError`; both reset the work tree first unless `reset_on_failure` is of
   completed.
 - **`base_commit`**, **`commits`**: the commits since the base, oldest first, each with its id and
   message. Empty after a reset.
-- **`title`**, **`description`**: the agent's account of what changed and why, from the last
+- **`title`**, **`description`**: the model's account of what changed and why, from the last
   attempt that reported `done`. Kept on other statuses as a record.
 - **`attempts`**: for each attempt, the stage it ended at and why, each check's command, exit code
   and output, what the checks left in the work tree (`left_new` for new files, staged or not, `left_modified` for tracked files
   a check changed), and the review's verdict and
   comments.
 
-Failures such as an agent crash raise `AgentError` and are never reported as a status.
+Failures such as a harness crash raise `HarnessError` and are never reported as a status.
 
 ## How a run works
 
 Each attempt runs these stages in order; a stage that fails ends the attempt.
 
-1. **Change** (agent). Makes the change and commits it, in one or more commits, then writes a result
-   file: `done` with a title and description, or `needs_human` with a reason. `needs_human` ends the
-   whole run.
+1. **Change** (harness). Makes the change and commits it, in one or more commits, then writes a
+   result file: `done` with a title and description, or `needs_human` with a reason. `needs_human`
+   ends the whole run.
 2. **Commit check** (code). HEAD is still on the starting branch, the last checked commit is still an
    ancestor of HEAD (nothing was amended or rebased), there is at least one new commit, and nothing
    is left uncommitted.
@@ -103,36 +104,36 @@ Each attempt runs these stages in order; a stage that fails ends the attempt.
    Checks run with their input closed, and each check's full output is kept in the work folder.
    The commit check left the work tree clean, so anything dirty after the checks came from them
    (reports, coverage, caches, a formatter's rewrite). That fails the attempt at `checks`, with the
-   reason `checks left changes in the work tree: <paths>`. For new files the agent is told to
+   reason `checks left changes in the work tree: <paths>`. For new files the model is told to
    git-ignore them or stop the check writing them; for tracked files, to commit the change if it
    belongs to the fix and revert it otherwise. A check that moves HEAD or switches branch
-   (`moved_head`) fails the attempt too; a commit the check made is not the agent's work, so the
-   next attempt must add one beyond it, and the agent is told how to put the repository back.
+   (`moved_head`) fails the attempt too; a commit the check made is not the harness's work, so the
+   next attempt must add one beyond it, and the model is told how to put the repository back.
    Without these rules the changes would be blamed on the review or on the next commit check.
-4. **Review** (agent, optional). A spec review: does the change do everything the instruction asks,
+4. **Review** (harness, optional). A spec review: does the change do everything the instruction asks,
    does it do anything it didn't ask for, and did it follow the testing guidance? It doesn't judge
    style or quality; run `workflows-code-review` on the commits for that. A result that is missing or
    invalid is retried once. After each review call the workflow checks that HEAD, the branch and
    the work tree are unchanged.
 
 When the commit check fails, a check fails, or the review asks for changes, and attempts remain, the
-agent gets what went wrong and fixes it with **new commits on top**. Commits from all attempts
+model gets what went wrong and fixes it with **new commits on top**. Commits from all attempts
 together form the change. The one exception is a commit check that failed because commits were
-rewritten or the agent left the starting branch: the agent is then told which commit HEAD must
+rewritten or the model left the starting branch: the model is then told which commit HEAD must
 descend from and how to put the repository back (`git checkout -f -B <branch> <commit>`, or
 `git checkout -f --detach <commit>` when the run started detached), and may reset for that.
 
-When a run ends in any status but `completed` (or raises after the first agent call), the workflow
+When a run ends in any status but `completed` (or raises after the first harness call), the workflow
 resets the work tree: back on the starting branch at the base commit, with untracked files removed
 (including nested repositories) and the repository's hooks turned off. Git-ignored files stay,
-including ones the agent committed or force-added. Commits the agent made on other branches are not
-removed, and neither are a stash or an unfinished rebase.
+including ones the model committed or force-added. Commits the model made on other branches are
+not removed, and neither are a stash or an unfinished rebase.
 
 ## What it doesn't do
 
 - Push, create branches or merge requests. The end product does that.
-- Stop an agent from writing outside its job. Agents run without approval prompts. The review
-  agent is told not to change anything, and the workflow checks that HEAD and the work tree are
+- Stop a harness from writing outside its job. Harnesses run without approval prompts. The review
+  model is told not to change anything, and the workflow checks that HEAD and the work tree are
   unchanged after a review, but it can't stop writes elsewhere. Run it on a throwaway checkout if
   that matters.
 - Stop a check's descendants that left its process group (`setsid`, coreutils `timeout`). After the

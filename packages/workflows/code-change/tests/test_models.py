@@ -27,7 +27,7 @@ def test_input_defaults(tmp_path):
 def test_settings_defaults():
     s = ChangeSettings()
     assert (
-        s.agent_timeout_seconds,
+        s.harness_timeout_seconds,
         s.check_timeout_seconds,
         s.check_output_chars,
         s.work_folder,
@@ -37,7 +37,7 @@ def test_settings_defaults():
 @pytest.mark.parametrize(
     "bad",
     [
-        {"agent_timeout_seconds": 0},
+        {"harness_timeout_seconds": 0},
         {"check_timeout_seconds": 0},
         {"check_output_chars": -1},
     ],

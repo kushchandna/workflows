@@ -120,7 +120,7 @@ def test_actions_outside_scope_dropped(codebase):
     assert c.dropped == [
         (
             ThreadAction(thread_id="t2", action="reopen"),
-            "thread not available to this pass",
+            "thread not available to this stage or agent",
         )
     ]
 

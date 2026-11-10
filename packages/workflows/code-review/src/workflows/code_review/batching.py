@@ -9,7 +9,7 @@ def _top_dir(path: str) -> str:
 def make_batches(
     files: list[ChangedFile], settings: ReviewSettings
 ) -> list[list[ChangedFile]]:
-    """Group non-binary files into batches, one agent call each.
+    """Group non-binary files into batches, one harness call each.
 
     Files are sorted by path. Every file counts as one toward the file limit, deletions and
     renames included. Its changed lines count toward the line limit, except for a deleted

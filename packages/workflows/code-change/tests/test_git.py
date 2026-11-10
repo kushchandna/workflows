@@ -235,7 +235,7 @@ def ref(repo: Path) -> str:
     return git(repo, "symbolic-ref", "HEAD").strip()
 
 
-def test_reset_keeps_an_ignored_file_the_agent_committed(repo):
+def test_reset_keeps_an_ignored_file_the_harness_committed(repo):
     (repo / "ignored.txt").write_text("keep")
     r = open_repository(repo)
     git(repo, "add", "-f", "ignored.txt")
@@ -247,7 +247,7 @@ def test_reset_keeps_an_ignored_file_the_agent_committed(repo):
     open_repository(repo)  # the work tree is clean again
 
 
-def test_reset_keeps_an_ignored_file_when_the_agent_unignores_it(repo):
+def test_reset_keeps_an_ignored_file_when_the_harness_unignores_it(repo):
     (repo / "ignored.txt").write_text("keep")
     r = open_repository(repo)
     (repo / ".gitignore").write_text("")
@@ -286,7 +286,7 @@ def test_a_tag_named_like_the_branch(repo):
     assert git(repo, "rev-parse", "refs/heads/main").strip() == r.base
 
 
-def test_the_agent_creates_a_tag_named_like_the_branch(repo):
+def test_the_harness_creates_a_tag_named_like_the_branch(repo):
     r = open_repository(repo)
     git(repo, "tag", "main")
     commit(repo, "b.py", "fix")

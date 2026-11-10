@@ -1,5 +1,7 @@
+from workflows.code_review.agents import BUILTIN_AGENTS, DEFAULT_AGENTS
 from workflows.code_review.errors import ReviewInputError
 from workflows.code_review.models import (
+    AgentCoverage,
     ChangeTarget,
     Codebase,
     Comment,
@@ -8,18 +10,22 @@ from workflows.code_review.models import (
     FileCoverage,
     FileTarget,
     LinesTarget,
-    PassCoverage,
+    ReviewAgent,
     ReviewEvent,
     ReviewInput,
-    ReviewPass,
     ReviewResult,
     ReviewSettings,
+    ReviewStage,
+    StageCoverage,
     Target,
     ThreadAction,
 )
 from workflows.code_review.reviewer import CodeReviewer
 
 __all__ = [
+    "BUILTIN_AGENTS",
+    "DEFAULT_AGENTS",
+    "AgentCoverage",
     "ChangeTarget",
     "CodeReviewer",
     "Codebase",
@@ -29,13 +35,14 @@ __all__ = [
     "FileCoverage",
     "FileTarget",
     "LinesTarget",
-    "PassCoverage",
+    "ReviewAgent",
     "ReviewEvent",
     "ReviewInput",
     "ReviewInputError",
-    "ReviewPass",
     "ReviewResult",
     "ReviewSettings",
+    "ReviewStage",
+    "StageCoverage",
     "Target",
     "ThreadAction",
 ]

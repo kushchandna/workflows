@@ -1,20 +1,36 @@
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from workflows.agent import Event
+from workflows.harness import Event
 
 
-class ReviewPass(StrEnum):
-    """The review passes. The values double as folder names in the work folder."""
+class ReviewStage(StrEnum):
+    """The fixed stages of every review. The values double as folder names."""
 
     PER_FILE = "per-file"
     OVERALL = "overall"
-    TEST_COVERAGE = "test-coverage"
-    CODE_PATTERNS = "code-patterns"
     CONSOLIDATION = "consolidation"
+
+
+class ReviewAgent(BaseModel):
+    """A reviewer with one focus, such as security. It reviews the whole change."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # Doubles as a folder name in the work folder.
+    name: str = Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", max_length=64)
+    instructions: str  # what to look for, and what to leave to others
+    needs_codebase: bool = False  # skipped when only diffs are given
+
+    @field_validator("instructions")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("instructions must not be blank")
+        return value
 
 
 class LinesTarget(BaseModel):
@@ -54,22 +70,38 @@ class FileCoverage(BaseModel):
     reason: str | None = None
 
 
-class PassCoverage(BaseModel):
-    review_pass: ReviewPass
+class StageCoverage(BaseModel):
+    stage: ReviewStage
+    state: Literal["ran", "skipped", "failed"]
+    reason: str | None = None
+
+
+class AgentCoverage(BaseModel):
+    agent: str
     state: Literal["ran", "skipped", "failed"]
     reason: str | None = None
 
 
 class DroppedThreadAction(BaseModel):
+    """A thread action that was not applied. Exactly one of ``stage`` and ``agent`` is set."""
+
     thread_id: str
     action: Literal["resolve", "reopen"]
-    review_pass: ReviewPass
+    stage: ReviewStage | None = None
+    agent: str | None = None
     reason: str
+
+    @model_validator(mode="after")
+    def check_one_source(self) -> Self:
+        if (self.stage is None) == (self.agent is None):
+            raise ValueError("set exactly one of stage and agent")
+        return self
 
 
 class Coverage(BaseModel):
     files: list[FileCoverage] = []
-    passes: list[PassCoverage] = []
+    stages: list[StageCoverage] = []
+    agents: list[AgentCoverage] = []
     dropped_thread_actions: list[DroppedThreadAction] = []
 
 
@@ -95,6 +127,8 @@ class ReviewInput(BaseModel):
     instructions: str | None = None
     change_author: str | None = None
     reviewer_name: str | None = None
+    # Review agents to run: built-in names and custom agents. None runs DEFAULT_AGENTS.
+    agents: list[str | ReviewAgent] | None = None
 
 
 class ReviewSettings(BaseModel):
@@ -104,14 +138,24 @@ class ReviewSettings(BaseModel):
     files_per_batch: int = Field(default=10, ge=1)
     directory_break_min_fill: float = Field(default=0.5, ge=0, le=1)
     max_parallel_calls: int = Field(default=4, ge=1)
-    agent_timeout_seconds: float | None = Field(default=1800, gt=0)
+    harness_timeout_seconds: float | None = Field(default=1800, gt=0)
     work_folder: Path | None = None
 
 
 class ReviewEvent(BaseModel):
-    """An agent event, labeled with the call it came from."""
+    """A harness event, labeled with the call it came from.
 
-    review_pass: ReviewPass
+    Exactly one of ``stage`` and ``agent`` is set.
+    """
+
+    stage: ReviewStage | None = None
+    agent: str | None = None
     batch: int | None
     attempt: int
     event: Event
+
+    @model_validator(mode="after")
+    def check_one_source(self) -> Self:
+        if (self.stage is None) == (self.agent is None):
+            raise ValueError("set exactly one of stage and agent")
+        return self

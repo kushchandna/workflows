@@ -657,12 +657,12 @@ def test_write_diffs_for_a_pull_request_without_file_changes(tmp_path, remote):
 
 @pytest.mark.git
 async def test_a_prepared_pull_request_can_be_reviewed(tmp_path, remote, monkeypatch):
-    # Fake GitHub, a real repository, and the real workflow with a fake agent: the
+    # Fake GitHub, a real repository, and the real workflow with a fake harness: the
     # prepared folder is all the workflow needs, with the diffs and the code together.
     import re
 
-    from workflows.agent.testing import FakeAgent
     from workflows.code_review import CodeReviewer
+    from workflows.harness.testing import FakeHarness
 
     bare, base, head = remote
     gh = FakeGitHub(base_sha=base, head_sha=head, merge_base=base, clone_url=str(bare))
@@ -691,14 +691,12 @@ async def test_a_prepared_pull_request_can_be_reviewed(tmp_path, remote, monkeyp
             (out_dir / "result.json").write_text(json.dumps({"comments": []}))
         return "done"
 
-    agent = FakeAgent(respond)
-    result = await CodeReviewer(agent).review(review_input)
+    harness = FakeHarness(respond)
+    result = await CodeReviewer(harness).review(review_input)
     assert result.status == "approved"
     assert [(f.path, f.state) for f in result.coverage.files] == [("a.py", "reviewed")]
-    assert {p.review_pass.value: p.state for p in result.coverage.passes}[
-        "code-patterns"
-    ] == "ran"
-    assert {r.working_folder for r in agent.requests} == {out.resolve() / "code"}
+    assert {a.agent: a.state for a in result.coverage.agents}["code-patterns"] == "ran"
+    assert {r.working_folder for r in harness.requests} == {out.resolve() / "code"}
 
 
 # --- keeping the token where it belongs ----------------------------------------------------

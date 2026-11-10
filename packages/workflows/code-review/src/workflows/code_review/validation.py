@@ -1,4 +1,4 @@
-"""Checking agent results: which comments and thread actions are usable."""
+"""Checking harness results: which comments and thread actions are usable."""
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -17,7 +17,7 @@ from workflows.code_review.models import (
 
 M = TypeVar("M", bound=BaseModel)
 
-NOT_AVAILABLE = "thread not available to this pass"
+NOT_AVAILABLE = "thread not available to this stage or agent"
 
 
 @dataclass(frozen=True)

@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from workflows.agent.testing import FakeAgent
 from workflows.code_change import (
     ChangeInput,
     ChangeInputError,
     ChangeSettings,
     CodeChanger,
 )
+from workflows.harness.testing import FakeHarness
 
 pytestmark = pytest.mark.git
 
@@ -60,7 +60,7 @@ def repo(tmp_path) -> Path:
     return r
 
 
-def real_agent(prompt_info, message="ABC-1 Add b"):
+def real_harness(prompt_info, message="ABC-1 Add b"):
     """Commits a new file for real on each change call; passes every review."""
     changes = []
 
@@ -82,12 +82,12 @@ def real_agent(prompt_info, message="ABC-1 Add b"):
         )
         return "ok"
 
-    return FakeAgent(respond=respond)
+    return FakeHarness(respond=respond)
 
 
 async def test_completed_run(repo, prompt_info):
     base = head(repo)
-    r = await CodeChanger(real_agent(prompt_info)).change(
+    r = await CodeChanger(real_harness(prompt_info)).change(
         ChangeInput(codebase=repo, instruction="Add b.py", checks=["test -f f1.py"])
     )
     assert r.status == "completed" and r.reason is None
@@ -98,7 +98,7 @@ async def test_completed_run(repo, prompt_info):
 
 async def test_failed_run_resets(repo, prompt_info):
     base = head(repo)
-    r = await CodeChanger(real_agent(prompt_info)).change(
+    r = await CodeChanger(real_harness(prompt_info)).change(
         ChangeInput(
             codebase=repo, instruction="Add b.py", checks=["exit 1"], max_attempts=2
         )
@@ -110,7 +110,7 @@ async def test_failed_run_resets(repo, prompt_info):
 
 
 async def test_reset_off_keeps_commits(repo, prompt_info):
-    r = await CodeChanger(real_agent(prompt_info)).change(
+    r = await CodeChanger(real_harness(prompt_info)).change(
         ChangeInput(
             codebase=repo,
             instruction="Add b.py",
@@ -123,17 +123,17 @@ async def test_reset_off_keeps_commits(repo, prompt_info):
     assert head(repo) == r.commits[0].id and (repo / "f1.py").exists()
 
 
-async def test_review_agent_defaults_to_change_agent(repo, prompt_info):
-    agent = real_agent(prompt_info)
-    r = await CodeChanger(agent).change(
+async def test_review_harness_defaults_to_change_harness(repo, prompt_info):
+    harness = real_harness(prompt_info)
+    r = await CodeChanger(harness).change(
         ChangeInput(codebase=repo, instruction="Add b.py", review=True)
     )
-    assert r.status == "completed" and len(agent.requests) == 2
+    assert r.status == "completed" and len(harness.requests) == 2
 
 
-async def test_separate_review_agent(repo, prompt_info):
-    reviewer = real_agent(prompt_info)
-    changer = CodeChanger(real_agent(prompt_info), review_agent=reviewer)
+async def test_separate_review_harness(repo, prompt_info):
+    reviewer = real_harness(prompt_info)
+    changer = CodeChanger(real_harness(prompt_info), review_harness=reviewer)
     r = await changer.change(
         ChangeInput(codebase=repo, instruction="Add b.py", review=True)
     )
@@ -143,7 +143,7 @@ async def test_separate_review_agent(repo, prompt_info):
 async def test_work_folder_kept(repo, tmp_path, prompt_info):
     w = tmp_path / "w"
     changer = CodeChanger(
-        real_agent(prompt_info), settings=ChangeSettings(work_folder=w)
+        real_harness(prompt_info), settings=ChangeSettings(work_folder=w)
     )
     await changer.change(
         ChangeInput(codebase=repo, instruction="Add b.py", checks=["true"])
@@ -155,10 +155,10 @@ async def test_work_folder_kept(repo, tmp_path, prompt_info):
 
 async def test_dirty_codebase_rejected(repo, prompt_info):
     (repo / "a.py").write_text("changed\n")
-    agent = real_agent(prompt_info)
+    harness = real_harness(prompt_info)
     with pytest.raises(ChangeInputError, match="not clean"):
-        await CodeChanger(agent).change(ChangeInput(codebase=repo, instruction="x"))
-    assert agent.requests == []
+        await CodeChanger(harness).change(ChangeInput(codebase=repo, instruction="x"))
+    assert harness.requests == []
 
 
 async def test_temp_folder_inside_the_codebase_is_rejected(
@@ -166,12 +166,12 @@ async def test_temp_folder_inside_the_codebase_is_rejected(
 ):
     (repo / "tmp").mkdir()  # an empty folder keeps the work tree clean
     monkeypatch.setattr(tempfile, "tempdir", str(repo / "tmp"))
-    agent = real_agent(prompt_info)
+    harness = real_harness(prompt_info)
     with pytest.raises(
         ChangeInputError, match="temporary folder is inside the codebase"
     ):
-        await CodeChanger(agent).change(ChangeInput(codebase=repo, instruction="x"))
-    assert agent.requests == []
+        await CodeChanger(harness).change(ChangeInput(codebase=repo, instruction="x"))
+    assert harness.requests == []
 
 
 async def test_symlinked_temp_folder_inside_the_codebase_is_rejected(
@@ -181,12 +181,12 @@ async def test_symlinked_temp_folder_inside_the_codebase_is_rejected(
     link = tmp_path / "link"
     link.symlink_to(repo / "tmp")
     monkeypatch.setattr(tempfile, "tempdir", str(link))
-    agent = real_agent(prompt_info)
+    harness = real_harness(prompt_info)
     with pytest.raises(
         ChangeInputError, match="temporary folder is inside the codebase"
     ):
-        await CodeChanger(agent).change(ChangeInput(codebase=repo, instruction="x"))
-    assert agent.requests == []
+        await CodeChanger(harness).change(ChangeInput(codebase=repo, instruction="x"))
+    assert harness.requests == []
 
 
 async def test_a_temp_folder_next_to_the_codebase_is_fine(
@@ -194,7 +194,7 @@ async def test_a_temp_folder_next_to_the_codebase_is_fine(
 ):
     (tmp_path / "elsewhere").mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "elsewhere"))
-    r = await CodeChanger(real_agent(prompt_info)).change(
+    r = await CodeChanger(real_harness(prompt_info)).change(
         ChangeInput(codebase=repo, instruction="Add b.py")
     )
     assert r.status == "completed"

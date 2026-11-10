@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from workflows.agent import Agent, AgentRequest, Event
 from workflows.code_change.checks import checks_reason, run_checks
 from workflows.code_change.formats import (
     ChangeNeedsHuman,
@@ -23,6 +22,7 @@ from workflows.code_change.models import (
 )
 from workflows.code_change.prompts import change_prompt, review_prompt
 from workflows.code_change.repo import Repository, summarize
+from workflows.harness import Event, Harness, HarnessRequest
 
 Status = Literal["completed", "needs_human", "inconclusive", "failed"]
 
@@ -49,22 +49,22 @@ class _Run:
         self,
         change_input: ChangeInput,
         repo: Repository,
-        change_agent: Agent,
-        review_agent: Agent,
+        change_harness: Harness,
+        review_harness: Harness,
         settings: ChangeSettings,
         work: Path,
         on_event: Callable[[ChangeEvent], None] | None,
     ) -> None:
         self.input = change_input
         self.repo = repo
-        self.change_agent = change_agent
-        self.review_agent = review_agent
+        self.change_harness = change_harness
+        self.review_harness = review_harness
         self.settings = settings
         self.work = work
         self.on_event = on_event
 
     async def call(
-        self, agent: Agent, stage: ChangeStage, attempt: int, call: int, prompt: str
+        self, harness: Harness, stage: ChangeStage, attempt: int, call: int, prompt: str
     ) -> None:
         def forward(event: Event) -> None:
             if self.on_event is not None:
@@ -72,13 +72,13 @@ class _Run:
                     ChangeEvent(stage=stage, attempt=attempt, call=call, event=event)
                 )
 
-        request = AgentRequest(
+        request = HarnessRequest(
             prompt=prompt,
             working_folder=self.input.codebase,
             extra_folders=[self.work],
-            timeout_seconds=self.settings.agent_timeout_seconds,
+            timeout_seconds=self.settings.harness_timeout_seconds,
         )
-        await agent.run(request, on_event=forward)
+        await harness.run(request, on_event=forward)
 
     async def review(
         self, attempt: int, attempt_dir: Path, last_checked: str, diff_file: Path
@@ -95,7 +95,7 @@ class _Run:
                 result_file=result_file,
             )
             await self.call(
-                self.review_agent, ChangeStage.REVIEW, attempt, call, prompt
+                self.review_harness, ChangeStage.REVIEW, attempt, call, prompt
             )
             if not self.repo.unchanged(last_checked):
                 return ReviewOutcome(
@@ -114,7 +114,7 @@ class _Run:
         attempts: list[Attempt] = []
         last_checked = self.repo.base
         # The HEAD a check left behind when it moved HEAD. A commit the check made is not the
-        # agent's work, so the next attempt must add one beyond it.
+        # harness's work, so the next attempt must add one beyond it.
         checks_head: str | None = None
         diff_file: Path | None = None
         title: str | None = None
@@ -139,7 +139,7 @@ class _Run:
                 expected_head=last_checked,
                 starting_branch=self.repo.starting_branch,
             )
-            await self.call(self.change_agent, ChangeStage.CHANGE, n, 1, prompt)
+            await self.call(self.change_harness, ChangeStage.CHANGE, n, 1, prompt)
             report = read_change_report(result_file)
             if report is None:
                 attempt.ended_at, attempt.reason = ChangeStage.CHANGE, NO_CHANGE_RESULT
@@ -218,8 +218,8 @@ async def run_change(
     change_input: ChangeInput,
     repo: Repository,
     *,
-    change_agent: Agent,
-    review_agent: Agent,
+    change_harness: Harness,
+    review_harness: Harness,
     settings: ChangeSettings,
     work: Path,
     on_event: Callable[[ChangeEvent], None] | None,
@@ -228,7 +228,9 @@ async def run_change(
 
     ``change_input.codebase`` is absolute and ``work`` exists and is empty.
     """
-    run = _Run(change_input, repo, change_agent, review_agent, settings, work, on_event)
+    run = _Run(
+        change_input, repo, change_harness, review_harness, settings, work, on_event
+    )
     try:
         outcome = await run.attempts()
     except BaseException as error:

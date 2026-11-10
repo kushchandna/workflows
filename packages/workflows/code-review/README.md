@@ -4,20 +4,27 @@ Reviews a set of code changes and returns a verdict with comments. The workflow 
 about platforms or team practice: an end product (a GitLab MR bot, an IDE plugin, a CLI)
 converts its own data into the input below and applies the output itself.
 
-Import: `workflows.code_review`. Depends on the [agent interface](../../agents/core/README.md)
-only, never on a concrete agent.
+Import: `workflows.code_review`. Depends on the [harness interface](../../harnesses/core/README.md)
+only, never on a concrete harness.
 
 ```python
 from pathlib import Path
 
-# The end product picks the agent.
-from workflows.agent_claude_code import ClaudeCodeAgent
-from workflows.code_review import CodeReviewer, Codebase, ReviewInput, ReviewPass
+# The end product picks the harness.
+from workflows.harness_claude_code import ClaudeCodeHarness
+from workflows.code_review import (
+    CodeReviewer,
+    Codebase,
+    ReviewAgent,
+    ReviewInput,
+    ReviewStage,
+)
 
 reviewer = CodeReviewer(
-    default_agent=ClaudeCodeAgent("sonnet"),
-    # Optional: a different agent for particular passes.
-    pass_agents={ReviewPass.CONSOLIDATION: ClaudeCodeAgent("opus")},
+    default_harness=ClaudeCodeHarness("sonnet"),
+    # Optional: a different harness for particular stages or review agents.
+    stage_harnesses={ReviewStage.CONSOLIDATION: ClaudeCodeHarness("opus")},
+    agent_harnesses={"security": ClaudeCodeHarness("opus")},
 )
 result = await reviewer.review(
     ReviewInput(
@@ -27,8 +34,15 @@ result = await reviewer.review(
         instructions="Prefer small functions.",
         change_author="alice",
         reviewer_name="review-bot",
+        # Optional: which review agents run. Leave it out for the default suite.
+        agents=[
+            "test-coverage",
+            "security",
+            "ui",
+            ReviewAgent(name="api-design", instructions="Your job: ..."),
+        ],
     ),
-    # Every agent action, labeled with its pass, batch and attempt.
+    # Every harness action, labeled with its stage or agent, batch and attempt.
     on_event=print,
 )
 print(result.status, len(result.comments))
@@ -46,6 +60,7 @@ At least one of `codebase` and `diffs` is required; every other field is optiona
 | `description` | Free text describing the change. |
 | `instructions` | Free text: what to focus on, or the team's review guidelines. |
 | `change_author`, `reviewer_name` | Names matched against the `author` of thread messages, so the reviewer knows the author's replies and its own earlier comments. |
+| `agents` | The [review agents](#review-agents) to run, in order: built-in names and custom `ReviewAgent`s. Left out, the default suite runs; `[]` runs none. |
 
 A thread:
 
@@ -64,36 +79,68 @@ A target is `lines` (with `side` `new` or `old`; `old` is for deleted lines), `f
 `ReviewResult` converts to JSON with `model_dump_json()`.
 
 - **`status`**: `approved`, `changes_requested`, or `inconclusive` (the reviewer couldn't judge
-  properly: a file couldn't be reviewed, a pass failed, or consolidation couldn't decide).
+  properly: a file couldn't be reviewed, a stage or agent failed, or consolidation couldn't
+  decide).
 - **`comments`**: each has a `target`, a `body` and an optional `reply_to` (a thread id). A
   reply carries its thread's own target.
 - **`thread_actions`**: `resolve` or `reopen` for a thread id. The end product decides whether to
   apply them.
 - **`coverage`**: each changed file as `reviewed`, `skipped` (binary files) or `unreviewed`; each
-  pass as `ran`, `skipped` or `failed`, with reasons; and any thread actions that were dropped.
+  stage and each chosen review agent as `ran`, `skipped` or `failed`, with reasons; and any
+  thread actions that were dropped.
 
 ## How a review runs
 
-Workflow code, not the agent, guarantees that every changed file is reviewed: it builds the
+Workflow code, not the harness, guarantees that every changed file is reviewed: it builds the
 change list from git or the diffs folder, splits the files into batches, and checks that each
 file got a valid result. A missing or invalid result is retried once; a file still without one
 is `unreviewed`, and the status can't be `approved`.
 
-| Pass | Job |
+A review has fixed stages, which always run, and review agents, which the input chooses.
+
+| Stage | Job |
 |---|---|
 | per file (in batches) | Bugs, logic and readability in each file's change; a summary of each file. |
-| test coverage | Whether new and changed behavior is tested, judged by reading code. |
-| code patterns | Whether the change follows the codebase's conventions (only with a codebase). |
 | overall | Whether the change does what the description says, and what is missing across files. |
 | consolidation | Merges duplicate comments, drops new comments that repeat an open thread, may reply to threads nobody answered, and sets the final status. |
 
-Per-file batches, test coverage and code patterns run in parallel, then overall, then
-consolidation. A pass may use its own agent; the rest use the default agent.
+Per-file batches and review agents run in parallel, then overall, then consolidation. A stage or
+an agent may use its own harness; the rest use the default harness. `agent_harnesses` is keyed
+by agent name, and a name that isn't chosen for a review is ignored, so one `CodeReviewer` can
+serve inputs that choose different agents.
 
 A comment with an invalid target isn't dropped: after the retry it moves to the whole-change level
 with its claimed location in the body, and consolidation then decides whether to keep it. Every
-pass reads all existing threads, but only the pass a thread is routed to may reply to it, resolve
-it or reopen it. Those replies and actions always reach the result.
+stage and agent reads all existing threads, but only the stage a thread is routed to may reply to
+it, resolve it or reopen it. Those replies and actions always reach the result.
+
+## Review agents
+
+A review agent is a reviewer with one focus. It reviews the whole change in one call, may
+comment on any file, and never acts on threads; consolidation merges what it finds with the
+rest. Like a stage, it gets one retry, and if it still has no valid result it is `failed` and
+the status can't be `approved`.
+
+| Built-in agent | Focus | Default suite |
+|---|---|---|
+| `test-coverage` | Whether new and changed behavior is tested, judged by reading code. | yes |
+| `code-patterns` | Whether the change follows the codebase's conventions. Needs a codebase. | yes |
+| `security` | Security problems the change introduces: injection, missing authorization, leaked secrets, unsafe configuration. | yes |
+| `ui` | Screens, components, styles and user-facing text: states, accessibility, layout, consistency and wording. | no |
+
+`BUILTIN_AGENTS` holds them by name and `DEFAULT_AGENTS` names the default suite. The per-file
+review leaves each running agent's focus to that agent, but still raises any clear bug it finds.
+
+A custom agent is a `ReviewAgent`:
+
+| Field | Meaning |
+|---|---|
+| `name` | Lowercase letters and digits, with single hyphens between, such as `api-design`. It names the agent's folders and its coverage entry. |
+| `instructions` | What to look for, and what to leave to the other reviewers. |
+| `needs_codebase` | When true, the agent is `skipped` if only diffs are given. Defaults to false. |
+
+A custom agent may reuse a built-in name to replace it, for example to narrow its focus. Choosing
+the same name twice, or an unknown built-in name, is an input error.
 
 ## Settings
 
@@ -104,31 +151,35 @@ it or reopen it. Those replies and actions always reach the result.
 | `lines_per_batch` | 1000 | Most changed lines in a per-file batch. A deleted file adds none. |
 | `files_per_batch` | 10 | Most files in a per-file batch. Every file counts, deletions and renames included. |
 | `directory_break_min_fill` | 0.5 | How full a batch must be before it breaks at a new top-level directory. |
-| `max_parallel_calls` | 4 | Most agent calls running at once. |
-| `agent_timeout_seconds` | 1800 | Timeout of every agent call (`None` for no timeout). |
+| `max_parallel_calls` | 4 | Most harness calls running at once. |
+| `harness_timeout_seconds` | 1800 | Timeout of every harness call (`None` for no timeout). |
 | `work_folder` | none | Keep the review's files here. It must be empty or missing, and outside the codebase. Otherwise a temporary folder is used and deleted. |
 
 ## Errors
 
-`ReviewInputError` is raised before any agent runs: no codebase or diffs, a codebase path that
-doesn't exist (or, when no diffs folder is given, isn't a git work tree or has no such base
-commit), a missing diffs folder, a bad discussions file or duplicate thread ids, or a
-`work_folder` that isn't empty or is inside the codebase. An `AgentError` from any call
-propagates and cancels the calls still running. Failures are never reported as a status.
+`ReviewInputError` is raised before any harness runs: no codebase or diffs, an unknown or
+repeated review agent, a codebase path that doesn't exist (or, when no diffs folder is given,
+isn't a git work tree or has no such base commit), a missing diffs folder, a bad discussions file
+or duplicate thread ids, or a `work_folder` that isn't empty or is inside the codebase. A
+`HarnessError` from any call propagates and cancels the calls still running. Failures are never
+reported as a status.
 
 ## The work folder
 
 ```
 <work>/
-  input/                 diffs/<path>.diff and threads.json, written before any agent runs
-  agent-output/          raw files exactly as the agents wrote them, one folder per attempt
-  review-passes/         checked results only; per-file results mirror input/diffs/
+  input/                 diffs/<path>.diff and threads.json, written before any harness runs
+  harness-output/        raw files exactly as the harnesses wrote them, one folder per attempt
+  results/               checked results only; per-file results mirror input/diffs/
 ```
 
-Agents are told to read the codebase, `input/` and `review-passes/`, and to write only inside
-their own folder under `agent-output/`. Nothing enforces this: the agent interface has no
-write limits, and the [Claude Code agent](../../agents/claude-code/README.md) runs in
-`bypassPermissions` mode, so a misbehaving agent could change files in the codebase. When you
+Under `harness-output/` and `results/`, each stage has a folder named after it, and each review
+agent has one at `agents/<name>/`.
+
+The models are told to read the codebase, `input/` and `results/`, and to write only inside
+their own folder under `harness-output/`. Nothing enforces this: the harness interface has no
+write limits, and the [Claude Code harness](../../harnesses/claude-code/README.md) runs in
+`bypassPermissions` mode, so a misbehaving model could change files in the codebase. When you
 review uncommitted work you can't afford to lose, use a throwaway copy of the checkout.
 
 Set `work_folder` to keep the folder; together with the event log it is the record for
@@ -136,5 +187,5 @@ investigating a review.
 
 ## Tests
 
-The unit tests use only the core `FakeAgent`. Tests that run `git` are marked `git`, left out
+The unit tests use only the core `FakeHarness`. Tests that run `git` are marked `git`, left out
 of the default run, and run with `uv run pytest -m git`.

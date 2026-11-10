@@ -1,4 +1,4 @@
-"""Schemas for the JSON files exchanged with agents."""
+"""Schemas for the JSON files exchanged with harnesses."""
 
 from typing import Literal
 
@@ -26,7 +26,7 @@ class PerFileResult(BaseModel):
     thread_actions: list[ThreadAction] = []
 
 
-class PassResult(BaseModel):
+class StepResult(BaseModel):
     comments: list[Comment] = []
     thread_actions: list[ThreadAction] = []
 

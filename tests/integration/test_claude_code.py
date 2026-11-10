@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from workflows.agent import AgentRequest, Event, ToolCallEvent
-from workflows.agent_claude_code import ClaudeCodeAgent
+from workflows.harness import Event, HarnessRequest, ToolCallEvent
+from workflows.harness_claude_code import ClaudeCodeHarness
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("WORKFLOWS_INTEGRATION") != "1",
@@ -21,8 +21,8 @@ async def test_reads_file_and_writes_result(tmp_path):
     out.mkdir()
 
     seen: list[Event] = []
-    result = await ClaudeCodeAgent("haiku").run(
-        AgentRequest(
+    result = await ClaudeCodeHarness("haiku").run(
+        HarnessRequest(
             prompt=f"Read note.txt, then write its exact contents to {out}/copy.txt. "
             "Reply with DONE.",
             working_folder=work,

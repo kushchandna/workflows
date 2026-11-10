@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from workflows.agent import Agent
-from workflows.code_review import ReviewEvent, ReviewPass
-from workflows.code_review.calls import CallRunner
+from workflows.code_review import ReviewEvent
+from workflows.code_review.calls import CallRunner, Step
+from workflows.harness import Harness
 
 
 class PromptInfo:
-    """Reads the fixed lines of a prompt, like an agent would."""
+    """Reads the fixed lines of a prompt, like a harness would."""
 
     @staticmethod
     def output_folder(prompt: str) -> Path:
@@ -37,13 +37,13 @@ def prompt_info() -> type[PromptInfo]:
 @pytest.fixture
 def runner_for() -> Callable[..., CallRunner]:
     def make(
-        agent: Agent,
+        harness: Harness,
         work: Path,
         on_event: Callable[[ReviewEvent], None] | None = None,
-        agents: Callable[[ReviewPass], Agent] | None = None,
+        harnesses: Callable[[Step], Harness] | None = None,
     ) -> CallRunner:
         return CallRunner(
-            agents=agents or (lambda review_pass: agent),
+            harnesses=harnesses or (lambda step: harness),
             working_folder=work,
             work=work,
             timeout_seconds=None,

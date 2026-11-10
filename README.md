@@ -5,36 +5,38 @@ Each workflow has a fixed input and output format. A workflow knows nothing abou
 input came from or where its output goes: GitLab, CI systems and IDEs belong to the end
 products that call it.
 
-Workflows that need an AI agent take a generic agent interface. The end product picks a
-concrete agent (Claude Code today; opencode and Codex are planned) and passes it in.
+Workflows that need an AI model take a generic harness interface. A harness is a tool, such as
+Claude Code, that runs a model as a coding agent: it gives the model tools and runs the loop.
+The end product picks a concrete harness (Claude Code today; opencode and Codex are planned)
+and passes it in.
 
 ## Packages
 
-Every workflow and every agent implementation is its own installable package.
+Every workflow and every harness implementation is its own installable package.
 
 | Package | Import | What it is |
 |---|---|---|
-| [`workflows-agent`](packages/agents/core/README.md) | `workflows.agent` | The generic agent interface, its request, result and event types, and a fake agent for tests. |
-| [`workflows-agent-claude-code`](packages/agents/claude-code/README.md) | `workflows.agent_claude_code` | An agent that runs the Claude Code CLI. |
+| [`workflows-harness`](packages/harnesses/core/README.md) | `workflows.harness` | The generic harness interface, its request, result and event types, and a fake harness for tests. |
+| [`workflows-harness-claude-code`](packages/harnesses/claude-code/README.md) | `workflows.harness_claude_code` | A harness that runs the Claude Code CLI. |
 | [`workflows-code-review`](packages/workflows/code-review/README.md) | `workflows.code_review` | Reviews a change and returns a status, comments, thread actions and a coverage report. |
 | [`workflows-code-change`](packages/workflows/code-change/README.md) | `workflows.code_change` | Applies one instruction to a codebase, commits it and returns a status, the commits and a description. |
 
 ```
 packages/
-  agents/
-    core/          workflows-agent
-    claude-code/   workflows-agent-claude-code
+  harnesses/
+    core/          workflows-harness
+    claude-code/   workflows-harness-claude-code
   workflows/
     code-review/   workflows-code-review
     code-change/   workflows-code-change
 scripts/           checks that run across packages
-tests/             tests that need a real agent (opt-in)
+tests/             tests that need a real harness (opt-in)
 ```
 
 ## Rules
 
-- A workflow depends only on the agent interface (`workflows-agent`), never on a concrete
-  agent package.
+- A workflow depends only on the harness interface (`workflows-harness`), never on a concrete
+  harness package.
 - Workflows know nothing about deployment or platforms. Anything team- or platform-specific
   arrives as input.
 - Shared code is extracted only when a second workflow needs it.

@@ -2,7 +2,6 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from workflows.agent import Agent
 from workflows.code_change.errors import ChangeInputError
 from workflows.code_change.git import open_repository
 from workflows.code_change.loop import run_change
@@ -13,23 +12,24 @@ from workflows.code_change.models import (
     ChangeSettings,
 )
 from workflows.code_change.repo import Repository
+from workflows.harness import Harness
 
 
 class CodeChanger:
     """Applies one instruction to a git codebase, commits it and reports the outcome.
 
-    The end product supplies the agents; this class never chooses a model. Without a
-    ``review_agent``, the change agent also does the review.
+    The end product supplies the harnesses; this class never chooses a model. Without a
+    ``review_harness``, the change harness also does the review.
     """
 
     def __init__(
         self,
-        change_agent: Agent,
-        review_agent: Agent | None = None,
+        change_harness: Harness,
+        review_harness: Harness | None = None,
         settings: ChangeSettings | None = None,
     ) -> None:
-        self._change_agent = change_agent
-        self._review_agent = review_agent or change_agent
+        self._change_harness = change_harness
+        self._review_harness = review_harness or change_harness
         self._settings = settings or ChangeSettings()
 
     async def change(
@@ -83,8 +83,8 @@ class CodeChanger:
         return await run_change(
             change_input,
             repo,
-            change_agent=self._change_agent,
-            review_agent=self._review_agent,
+            change_harness=self._change_harness,
+            review_harness=self._review_harness,
             settings=self._settings,
             work=work,
             on_event=on_event,

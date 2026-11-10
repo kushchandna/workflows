@@ -8,7 +8,7 @@ from workflows.code_change.repo import Dirty
 
 
 class PromptInfo:
-    """Reads the fixed lines of a prompt, like an agent would."""
+    """Reads the fixed lines of a prompt, like a harness would."""
 
     @staticmethod
     def result_file(prompt: str) -> Path:
